@@ -33,12 +33,10 @@ import * as p from '@clack/prompts';
 import k from 'kleur';
 
 import * as setupLog from '../logs.js';
-import { BACK_TO_CHANNEL_SELECTION, type ChannelFlowResult } from '../lib/back-nav.js';
 import { brightSelect } from '../lib/bright-select.js';
 import { askOperatorRole } from '../lib/role-prompt.js';
 import { ensureAnswer, fail, runQuietChild } from '../lib/runner.js';
-import { accentGreen, note, wrapForGutter } from '../lib/theme.js';
-import { readEnvKey } from '../environment.js';
+import { wrapForGutter } from '../lib/theme.js';
 
 const DEFAULT_AGENT_NAME = 'Nano';
 
@@ -49,11 +47,10 @@ interface RemoteCreds {
   apiKey: string;
 }
 
-export async function runIMessageChannel(displayName: string): Promise<ChannelFlowResult> {
+export async function runIMessageChannel(displayName: string): Promise<void> {
   const isMac = os.platform() === 'darwin';
 
   const mode = await askMode(isMac);
-  if (mode === 'back') return BACK_TO_CHANNEL_SELECTION;
   let remoteCreds: RemoteCreds | null = null;
 
   if (mode === 'local') {
@@ -141,38 +138,34 @@ export async function runIMessageChannel(displayName: string): Promise<ChannelFl
   }
 }
 
-async function askMode(isMac: boolean): Promise<Mode | 'back'> {
-  const baseOptions = isMac
-    ? [
-        {
-          value: 'local' as const,
-          label: 'Local (this Mac)',
-          hint: "uses this machine's iMessage account",
-        },
-        {
-          value: 'remote' as const,
-          label: 'Remote (Photon API)',
-          hint: 'the bot lives on another server',
-        },
-      ]
-    : [
-        {
-          value: 'remote' as const,
-          label: 'Remote (Photon API)',
-          hint: 'only option off macOS',
-        },
-      ];
+async function askMode(isMac: boolean): Promise<Mode> {
   const choice = ensureAnswer(
-    await brightSelect<Mode | 'back'>({
+    await brightSelect<Mode>({
       message: 'How should iMessage run?',
       initialValue: isMac ? 'local' : 'remote',
-      options: [
-        ...baseOptions,
-        { value: 'back', label: '← Back to channel selection' },
-      ],
+      options: isMac
+        ? [
+            {
+              value: 'local',
+              label: 'Local (this Mac)',
+              hint: "uses this machine's iMessage account",
+            },
+            {
+              value: 'remote',
+              label: 'Remote (Photon API)',
+              hint: 'the bot lives on another server',
+            },
+          ]
+        : [
+            {
+              value: 'remote',
+              label: 'Remote (Photon API)',
+              hint: 'only option off macOS',
+            },
+          ],
     }),
   );
-  if (choice !== 'back') setupLog.userInput('imessage_mode', String(choice));
+  setupLog.userInput('imessage_mode', String(choice));
   return choice;
 }
 
@@ -196,7 +189,7 @@ async function walkThroughFullDiskAccess(): Promise<void> {
   }
   const nodeDir = path.dirname(nodePath);
 
-  note(
+  p.note(
     wrapForGutter(
       [
         `iMessage needs Full Disk Access granted to the Node binary:`,
@@ -229,20 +222,7 @@ async function walkThroughFullDiskAccess(): Promise<void> {
 }
 
 async function collectRemoteCreds(): Promise<RemoteCreds> {
-  const existingUrl = readEnvKey('IMESSAGE_SERVER_URL');
-  const existingKey = readEnvKey('IMESSAGE_API_KEY');
-  if (existingUrl && existingKey && /^https?:\/\//i.test(existingUrl)) {
-    const reuse = ensureAnswer(await p.confirm({
-      message: `Found existing Photon credentials (${existingUrl}). Use them?`,
-      initialValue: true,
-    }));
-    if (reuse) {
-      setupLog.userInput('imessage_remote_creds', 'reused-existing');
-      return { serverUrl: existingUrl, apiKey: existingKey };
-    }
-  }
-
-  note(
+  p.note(
     [
       "Photon is a separate service that owns an iMessage account and",
       "exposes it over HTTP. NanoClaw will talk to it via its API.",
@@ -270,7 +250,6 @@ async function collectRemoteCreds(): Promise<RemoteCreds> {
   const keyAnswer = ensureAnswer(
     await p.password({
       message: 'Photon API key',
-      clearOnError: true,
       validate: (v) => ((v ?? '').trim() ? undefined : 'API key is required'),
     }),
   );
@@ -285,13 +264,12 @@ async function collectRemoteCreds(): Promise<RemoteCreds> {
 }
 
 async function askOperatorHandle(): Promise<string> {
-  note(
+  p.note(
     [
       "What phone number or email do you iMessage with?",
       "That's where your assistant will send its welcome message.",
       '',
-      k.dim('  • Phone: start with + and your country code, no spaces or dashes'),
-      k.dim('    Example: +14155551234 (country code 1, then 4155551234)'),
+      k.dim('  • Phone: full E.164, e.g. +15551234567'),
       k.dim('  • Email: whatever iMessage recognises (Apple ID, iCloud alias, …)'),
     ].join('\n'),
     'Your iMessage handle',
@@ -325,7 +303,7 @@ async function resolveAgentName(): Promise<string> {
   }
   const answer = ensureAnswer(
     await p.text({
-      message: `What should your ${accentGreen('assistant')} be called?`,
+      message: 'What should your assistant be called?',
       placeholder: DEFAULT_AGENT_NAME,
       defaultValue: DEFAULT_AGENT_NAME,
     }),

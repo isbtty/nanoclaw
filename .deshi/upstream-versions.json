@@ -10,8 +10,8 @@
       "policy": "merge-base"
     },
     "channels": {
-      "sha": null,
-      "lastSyncedAt": null,
+      "sha": "8e91d37bc9c14b06580bda4b46c85f33cf755b15",
+      "lastSyncedAt": "2026-05-12T17:11:45+09:00",
       "installed": [
         "slack",
         "discord",
