@@ -4,14 +4,14 @@
     "repo": "nanocoai/nanoclaw",
     "main": {
       "tag": null,
-      "sha": null,
-      "lastSyncedAt": null,
-      "lastSyncedBy": null,
+      "sha": "7e37b13aabd0d7ed8ebdedfa96cecad8e1e89796",
+      "lastSyncedAt": "2026-05-12T16:42:21+09:00",
+      "lastSyncedBy": "han2210mh@gmail.com",
       "policy": "merge-base"
     },
     "channels": {
-      "sha": null,
-      "lastSyncedAt": null,
+      "sha": "8e91d37bc9c14b06580bda4b46c85f33cf755b15",
+      "lastSyncedAt": "2026-05-12T17:11:45+09:00",
       "installed": [
         "slack",
         "discord",
