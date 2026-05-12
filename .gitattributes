@@ -1,0 +1,9 @@
+# Custom merge drivers for deshi barrel files.
+# 詳細: ADR-0005 (.deshi/adr/0005-barrel-merge-driver.md)
+# 各開発者のローカル git config に `merge.deshi-barrel.*` を登録する必要がある:
+#   git config merge.deshi-barrel.name "deshi barrel union merge driver"
+#   git config merge.deshi-barrel.driver ".deshi/scripts/merge-barrel.sh %O %A %B %P"
+#
+# /deshi-update-from-upstream skill が初回実行時に自動登録する (Step 0-2)。
+src/channels/index.ts   merge=deshi-barrel
+src/providers/index.ts  merge=deshi-barrel

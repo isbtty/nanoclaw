@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repo": "nanocoai/nanoclaw",
+    "main": {
+      "tag": null,
+      "sha": null,
+      "lastSyncedAt": null,
+      "lastSyncedBy": null,
+      "policy": "merge-base"
+    },
+    "channels": {
+      "sha": null,
+      "lastSyncedAt": null,
+      "installed": [
+        "slack",
+        "discord",
+        "telegram",
+        "whatsapp",
+        "imessage",
+        "matrix",
+        "webex",
+        "teams",
+        "linear",
+        "github",
+        "gchat",
+        "wechat",
+        "whatsapp-cloud",
+        "resend"
+      ]
+    }
+  },
+  "provider": {
+    "fixed": "claude"
+  },
+  "deshi": {
+    "currentTag": null,
+    "currentCommit": null
+  }
+}
