@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-05-01
-- Refs: isbtty/deshi#126, isbtty/deshi#128, isbtty/deshi#189, isbtty/deshi#199
+- Refs: isbtty/deshi#126, isbtty/deshi#128
 
 ## Context
 
@@ -12,8 +12,6 @@ upstream の構造として、`upstream/channels` は `upstream/main` の直系�
 
 1. `/deshi-update-nanoclaw-official-channels` の ancestor チェックが通らず、channels の同期に進めない
 2. main HEAD まで取り込んだ commit のうち、まだ channels 側に取り込まれていない変更が deshi に先行混入し、channels 取り込み時の整合性検証が困難になる
-
-過去 (dou-id/nanoclaw-deshi 時代) には、この問題を「`upstream.main.sha` を main HEAD ではなく共通祖先に手動で書き換える」ことで一時回避していた。しかしこれは Skill レベルでの実装が伴っておらず、毎回手動介入が必要で、運用が回らなかった。
 
 ## Decision
 

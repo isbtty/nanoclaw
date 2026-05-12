@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-04-28
-- Refs: isbtty/deshi#98, isbtty/deshi#189, isbtty/deshi#199
+- Refs: isbtty/deshi#98
 
 ## Context
 
@@ -25,6 +25,5 @@ Skill 名の最外 prefix を以下に固定する。
 
 ## See also
 
-- 旧 3 層 fork モデル (Tier C 顧客 fork) は #199 で廃止された。当初は `dou-<customerCode>-...` の Tier C 命名規則が存在したが、現在は単一 fork (`isbtty/nanoclaw`) で運用するため不要。
 - 詳細議論: isbtty/deshi#98 (本文「Skill 実装ルール」セクション)
 - ディレクトリ配置: [docs/design.md](../docs/design.md)

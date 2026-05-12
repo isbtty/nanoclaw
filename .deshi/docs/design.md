@@ -201,7 +201,6 @@ git reset --hard deshi-backup-pre-upstream-<timestamp>
 - (2026-04-27) `upstream-versions.json` の `channels` を「branch HEAD の単一 SHA + `installed` 配列」で管理する形に簡素化 (upstream/channels は単一ブランチで全 channel が同 commit に乗っているため)。
 - (2026-04-28) 基準コミットを共通祖先運用に移行。`upstream/channels` が `upstream/main` の祖先関係を満たさず、ancestor チェックを通すために共通祖先まで戻す必要があった。詳細は isbtty/deshi#126。
 - (2026-05-01) 共通祖先運用を Skill レベルで実装。`/deshi-update-from-upstream` の default 取り込み対象を `git merge-base upstream/main upstream/channels` に変更。詳細は ADR-0008 と isbtty/deshi#128。
-- (2026-05-XX) 3 層 fork モデル (Tier C 顧客 fork) を廃止し、単一 fork (`isbtty/nanoclaw`) で運用する方針に。`dou-` 接頭辞を `deshi-` に変更。詳細は isbtty/deshi#189, isbtty/deshi#199。
 
 ### 未解決事項
 
@@ -214,5 +213,5 @@ git reset --hard deshi-backup-pre-upstream-<timestamp>
 
 - 全体像: [overview.md](overview.md)
 - ADR 一覧: [adr/](../adr/)
-- 議論の経緯: isbtty/deshi#98, isbtty/deshi#189, isbtty/deshi#199
+- 議論の経緯: isbtty/deshi#98
 - Skill 仕様: `.claude/skills/deshi-update-from-upstream/SKILL.md` 他

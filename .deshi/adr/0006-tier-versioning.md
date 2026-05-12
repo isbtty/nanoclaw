@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-04-28
-- Refs: isbtty/deshi#98, isbtty/deshi#189, isbtty/deshi#199
+- Refs: isbtty/deshi#98
 
 ## Context
 
@@ -29,4 +29,3 @@ deshi 全体の release tag (`v0.X.Y-initial` 等) は monorepo tag として、
 
 - 詳細議論: isbtty/deshi#98 (本文「バージョニング戦略 (Tier 別)」セクション)
 - スキーマ詳細: [docs/design.md](../docs/design.md)
-- 旧 Tier C (顧客 fork) は #199 で廃止。

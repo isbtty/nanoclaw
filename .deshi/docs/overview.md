@@ -1,10 +1,8 @@
 # isbtty/nanoclaw 全体像
 
-このドキュメントは isbtty が運用する nanoclaw fork の **全体像** を示す。詳細設計は [design.md](design.md)、設計判断の正式記録は [adr/](../adr/)、議論の経緯は isbtty/deshi#98 / isbtty/deshi#189 / isbtty/deshi#199 を参照。
+このドキュメントは isbtty が運用する nanoclaw fork の **全体像** を示す。詳細設計は [design.md](design.md)、設計判断の正式記録は [adr/](../adr/)、議論の経緯は isbtty/deshi#98 を参照。
 
-## 二層 fork モデル
-
-3 層 fork モデル (Tier C, 顧客 fork) は #199 で廃止された。現在は単一 fork で運用する。
+## Fork モデル
 
 ```
 upstream: nanocoai/nanoclaw  (main + channels を追従)
@@ -78,4 +76,4 @@ isbtty/nanoclaw/
 
 - 詳細設計: [design.md](design.md)
 - ADR 一覧: [adr/](../adr/)
-- 議論の経緯: isbtty/deshi#98, isbtty/deshi#189, isbtty/deshi#199
+- 議論の経緯: isbtty/deshi#98

@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-04-28
-- Refs: isbtty/deshi#98, isbtty/deshi#189, isbtty/deshi#199
+- Refs: isbtty/deshi#98
 
 ## Context
 
