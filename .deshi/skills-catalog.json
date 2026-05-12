@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "deshiRelease": "v0.1.0-initial",
+  "skills": [
+    {
+      "name": "deshi-update-from-upstream",
+      "kind": "operational",
+      "version": "0.1.0",
+      "owner": "@isbtty/deshi-core",
+      "sources": [
+        ".claude/skills/deshi-update-from-upstream/"
+      ],
+      "introducedIn": "v0.1.0-initial"
+    },
+    {
+      "name": "deshi-update-nanoclaw-official-channels",
+      "kind": "operational",
+      "version": "0.1.0",
+      "owner": "@isbtty/deshi-core",
+      "sources": [
+        ".claude/skills/deshi-update-nanoclaw-official-channels/",
+        ".deshi/scripts/install-official-channels.sh"
+      ],
+      "introducedIn": "v0.1.0-initial"
+    }
+  ]
+}
