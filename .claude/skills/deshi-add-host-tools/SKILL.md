@@ -1,6 +1,6 @@
 ---
 name: deshi-add-host-tools
-description: Add the deshi host-tools MCP bridge — agent containers gain access to a `mcp__deshi__*` namespace that forwards to a Node HTTP server running on the host (default `http://127.0.0.1:5180`). Use this when wiring deshi handlers (health, future daemon_* / tool_* categories) to a NanoClaw agent group.
+description: container 内 agent が host 側を叩くための deshi host-tools MCP bridge を agent group に追加する。`mcp__deshi__*` namespace 経由で、host 上で動く Node HTTP server (default `http://127.0.0.1:5180`) に forward される。deshi の handler (`health`、将来の `daemon_*` / `tool_*` カテゴリ) を NanoClaw の agent group に配線したい時に使う。
 ---
 
 # deshi host-tools MCP bridge
