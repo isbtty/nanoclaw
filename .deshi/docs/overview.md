@@ -29,6 +29,9 @@ isbtty/nanoclaw (main)                  ← Tier A + Tier B
 |-------|-----------|------|
 | `/deshi-update-from-upstream` | upstream main を deshi に取り込むラッパー (内部で channels skill を自動呼出) | 任意のタイミング |
 | `/deshi-update-nanoclaw-official-channels` | `upstream/channels` から `installed` 配列の channel を一括再適用 | 上記から自動呼出 (単独実行も可) |
+| `/deshi-add-host-tools` | container 内 agent が host 側を叩くための MCP bridge を agent group に追加 (`mcp__deshi__*` namespace) | agent group ごとに 1 回 |
+
+`mcp__deshi__*` 系 tool の命名規則は [docs/mcp-tool-naming.md](mcp-tool-naming.md) を参照。
 
 ## ディレクトリ配置 (要点)
 
@@ -37,17 +40,27 @@ isbtty/nanoclaw/
 ├── .claude/skills/
 │   ├── add-slack/                       ← Tier A (upstream、触らない)
 │   ├── deshi-update-from-upstream/      ← Tier B Operational
-│   └── deshi-update-nanoclaw-official-channels/
+│   ├── deshi-update-nanoclaw-official-channels/
+│   └── deshi-add-host-tools/            ← Tier B Feature (host-tools MCP bridge)
 │
-├── src/deshi/                           ← deshi 専有 namespace
+├── src/deshi/                           ← deshi 専有 namespace (host 側)
 │   ├── index.ts
 │   ├── channels/index.ts                ← deshi channels barrel (将来用)
 │   ├── providers/index.ts               ← deshi providers barrel (将来用)
+│   ├── host-tools-server.ts             ← container ↔ host bridge の dispatcher
+│   ├── host-tools/                      ← handler 群 (health 他)
+│   │   ├── index.ts                     ← handler barrel
+│   │   └── health.ts
 │   └── lib/                             ← (必要に応じて)
 │
 ├── container/skills/
 │   ├── welcome/                         ← Tier A
+│   ├── deshi-add-host-tools/            ← Tier B (MCP stdio スクリプト)
+│   │   └── deshi-mcp-stdio.ts
 │   └── deshi-*/                         ← Tier B (prefix 必須、将来追加分)
+│
+├── setup/launchd/                       ← Tier B (host 側 launchd plist テンプレート)
+│   └── com.isbtty.nanoclaw.host-tools.plist
 │
 └── .deshi/                              ← メタディレクトリ
     ├── upstream-versions.json           ← Tier A pin
@@ -56,7 +69,9 @@ isbtty/nanoclaw/
     ├── adr/                             ← ADR 置き場
     ├── docs/                            ← 設計方針・運用ドキュメント
     │   ├── overview.md                  ← このファイル
-    │   └── design.md                    ← 詳細設計
+    │   ├── design.md                    ← 詳細設計
+    │   ├── mcp-tool-naming.md           ← MCP tool 命名規則
+    │   └── merge-driver-setup.md        ← merge driver 登録手順
     └── scripts/
         ├── install-official-channels.sh
         ├── merge-barrel.sh              ← git custom merge driver

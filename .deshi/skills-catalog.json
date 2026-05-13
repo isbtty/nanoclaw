@@ -22,6 +22,20 @@
         ".deshi/scripts/install-official-channels.sh"
       ],
       "introducedIn": "v0.1.0-initial"
+    },
+    {
+      "name": "deshi-add-host-tools",
+      "kind": "feature",
+      "version": "0.1.0",
+      "owner": "@isbtty/deshi-core",
+      "sources": [
+        ".claude/skills/deshi-add-host-tools/",
+        "container/skills/deshi-add-host-tools/",
+        "src/deshi/host-tools-server.ts",
+        "src/deshi/host-tools/",
+        "setup/launchd/com.isbtty.nanoclaw.host-tools.plist"
+      ],
+      "introducedIn": "v0.1.0"
     }
   ]
 }

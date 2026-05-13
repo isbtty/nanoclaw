@@ -193,7 +193,25 @@ backup branch + backup tag が必ず作成されるため:
 git reset --hard deshi-backup-pre-upstream-<timestamp>
 ```
 
-## 10. 検討経緯と未解決事項
+## 10. MCP tool 命名規則
+
+詳細は [docs/mcp-tool-naming.md](mcp-tool-naming.md) と [ADR-0009](../adr/0009-mcp-tool-naming.md)。
+
+container 内 agent に公開する MCP tool の命名規則:
+
+- **MCP server 名は単一 `deshi`** — `container.json` の `mcpServers` の key として登録。agent からは `mcp__deshi__<tool>` で見える。
+- **tool 名は 3 カテゴリ**:
+  - `health` — bridge 自身の生存確認 (prefix なし、例外)
+  - `daemon_<name>` — deshi daemon の API を叩く (例: `daemon_run_skill`)
+  - `tool_<name>` — host で完結する処理 (将来例: `tool_kindle_capture`)
+- **物理配置**:
+  - host 用 handler: `src/deshi/host-tools/<name>.ts` (barrel `index.ts` に登録)
+  - container 用 MCP stdio: `container/skills/deshi-add-host-tools/deshi-mcp-stdio.ts`
+- **upstream `TOOL_ALLOWLIST` は touch しない** — `mcpServers` から自動生成される (ADR-0002 維持)
+
+新 handler 追加時は [mcp-tool-naming.md](mcp-tool-naming.md) の手順 (handler 関数 → barrel → MCP tool 公開 → group 再起動) に従う。
+
+## 11. 検討経緯と未解決事項
 
 ### 設計判断の経緯 (主要なもののみ抜粋)
 
