@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  deshi host-tools-server launchd template (macOS).
+
+  This file is a template. Before loading into launchd, replace the placeholders
+  below with the values for your install:
+
+    __PROJECT_ROOT__   absolute path to the nanoclaw checkout (e.g. /Users/<you>/code/nanoclaw)
+    __PNPM_PATH__      absolute path to the pnpm binary (run `which pnpm` to find it)
+
+  After substitution, copy the resulting file to:
+    ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist
+  and load it with:
+    launchctl load ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist
+
+  See .claude/skills/deshi-add-host-tools/SKILL.md for the full setup flow.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.isbtty.nanoclaw.host-tools</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PNPM_PATH__</string>
+        <string>exec</string>
+        <string>tsx</string>
+        <string>src/deshi/host-tools-server.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DESHI_HOST_TOOLS_PORT</key>
+        <string>5180</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/logs/host-tools.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/logs/host-tools.error.log</string>
+</dict>
+</plist>
