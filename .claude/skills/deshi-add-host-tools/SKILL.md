@@ -8,15 +8,25 @@ description: container 内 agent が host 側を叩くための deshi host-tools
 このスキルは、container 内の agent が host 側 (将来的に deshi daemon を含む) のリソースを叩けるよう、MCP 経由の bridge を agent group に追加する。
 
 ```
-[container] mcp__deshi__<tool>
-   │
-   │  stdio (deshi-mcp-stdio.ts) → HTTP POST
-   ▼
-host-tools-server (host) :5180
-   │
-   ▼
-src/deshi/host-tools/<handler>.ts (handlers map)
+[channel] ─→ [host] ─→ [container]
+                          ├─ agent (= Claude LLM) ─ tool 呼び出し
+                          │       ↓
+                          └─ deshi-mcp-stdio (MCP server)
+                                  │ HTTP POST
+                                  ▼
+                       host-tools-server (host) :5180
+                                  │
+                                  ▼
+                       src/deshi/host-tools/<handler>.ts
 ```
+
+### 用語
+
+- **agent**: container 内で動いている Claude (LLM 本体)。Telegram 等の channel から届いたメッセージに応答を生成する主体。tool を呼ぶ時は MCP 経由で `mcp__deshi__<tool>` のような名前を使う。
+- **agent group**: その agent (Claude) にどの設定 (memory / skill / MCP server / personality) を持たせるかの設定単位。NanoClaw v2 の中心概念で `ncl groups list` で一覧できる。
+- **session**: 特定 channel × thread に紐づく agent の会話セッション。container 1 個 = 1 session。
+
+以降「agent から呼ばれる名前」と書いてあれば「container 内 Claude が tool を呼ぶ時の名前」のこと。
 
 ## アーキテクチャと命名規則
 
