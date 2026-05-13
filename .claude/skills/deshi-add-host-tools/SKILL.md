@@ -23,9 +23,24 @@ src/deshi/host-tools/<handler>.ts (handlers map)
 - **MCP server 名**: `deshi` (固定)。container.json の `mcpServers` の key と一致させる。upstream の agent-runner が `mcpServers` から allowlist を自動生成するため (`container/agent-runner/src/providers/claude.ts:294-297`)、`mcp__deshi__*` が自動的に allowedTools に含まれる。
 - **tool 名のカテゴリ** (ADR-0009):
   - `health` — bridge 自身の生存確認 (例外、prefix なし)
-  - `daemon_<name>` — deshi daemon の API を叩く (工程 4/5 で追加)
-  - `tool_<name>` — host で完結する処理 (将来追加)
-- **HTTP path**: `POST /tools/<name>` で handler を呼ぶ。`GET /health` は curl 等での疎通確認用ショートカット。
+  - `daemon_<name>` — deshi daemon の API を叩く
+  - `tool_<name>` — host で完結する処理
+- **agent 名と HTTP path の 2 階層命名**: agent から見える tool 名はカテゴリだけのシンプルな形 (`mcp__deshi__daemon_run_skill`)。一方 HTTP 側は **host-tools-server が deshi 系であることを明示** するため `deshi_` prefix を付ける (`POST /tools/deshi_daemon_run_skill`)。container 内 stdio MCP server が両者を mapping する:
+
+  ```typescript
+  server.tool(
+    'daemon_run_skill',                              // ← agent から呼ばれる名前
+    '<description>', { /* schema */ },
+    async (args) => callHostTool('deshi_daemon_run_skill', args),  // ← HTTP path 側
+  );
+  ```
+
+  `health` だけは例外で agent / HTTP 両方とも prefix なし (bridge 自身の確認なので)。
+- **HTTP path** 一覧:
+  - `GET /health` — curl 等で host から直接疎通確認 (handlers.health を呼ぶショートカット)
+  - `POST /tools/health` — MCP 経由の疎通確認 (同じく handlers.health)
+  - `POST /tools/deshi_daemon_<name>` — `daemon_<name>` カテゴリの handler 呼び出し
+  - `POST /tools/deshi_tool_<name>` — `tool_<name>` カテゴリの handler 呼び出し
 
 詳細は `.deshi/docs/mcp-tool-naming.md` および `.deshi/adr/0009-mcp-tool-naming.md` 参照。
 

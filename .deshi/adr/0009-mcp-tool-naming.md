@@ -25,7 +25,7 @@ ADR-0002 制定時点では MCP は具体的な対象に入っていなかった
    - agent から見える tool 名は `mcp__deshi__<tool>` の形になる
    - 将来 deshi 系の MCP server を増やしたくなったら、その時 ADR を起こして再検討する
 
-2. **tool 名は以下 3 カテゴリで命名する**
+2. **tool 名は以下 3 カテゴリで命名する** (agent から見える tool 名)
 
    | カテゴリ | prefix | 用途 | 例 |
    |---|---|---|---|
@@ -35,17 +35,48 @@ ADR-0002 制定時点では MCP は具体的な対象に入っていなかった
 
    `health` だけが prefix 無しの例外。理由: bridge 自体の生存確認は **どのカテゴリにも属さない bridge 固有の概念** であり、`bridge_health` のような prefix を付けると冗長。
 
-3. **handler の物理配置**
-   - host-tools-server に登録する handler 関数は **`src/deshi/host-tools/<name>.ts`** に配置する
-   - `src/deshi/host-tools/index.ts` の `handlers` barrel に登録する
-   - 例: `src/deshi/host-tools/health.ts` → `index.ts` で `handlers.health = createHealthHandler(...)` として登録
+3. **agent 名と HTTP path / handler key は 2 階層で別命名にする**
 
-4. **container 内 MCP stdio スクリプトの物理配置**
+   container 内 stdio MCP server は agent 向けの tool 名と host-tools-server 側の HTTP path 名を **明示的に mapping** する:
+
+   | layer | 命名 | deshi prefix |
+   |---|---|---|
+   | agent (MCP tool) | `mcp__deshi__daemon_run_skill` | あり (Claude SDK が `mcp__<server>__` を自動付与) |
+   | container stdio `server.tool(name, ...)` | `daemon_run_skill` | なし (上記 (2) のカテゴリ規約) |
+   | HTTP path | `POST /tools/deshi_daemon_run_skill` | **あり** (`deshi_` を明示) |
+   | handler key | `handlers.deshi_daemon_run_skill` | **あり** |
+   | handler file | `src/deshi/host-tools/deshi_daemon_run_skill.ts` | **あり** |
+
+   実装例:
+
+   ```typescript
+   // container/skills/deshi-add-host-tools/deshi-mcp-stdio.ts
+   server.tool(
+     'daemon_run_skill',                                       // agent 側
+     '<description>', { /* schema */ },
+     async (args) => callHostTool('deshi_daemon_run_skill', args), // HTTP 側
+   );
+   ```
+
+   `health` だけは例外で agent / HTTP path / handler key すべて `health` のまま (bridge 自身の確認なので、deshi prefix を付ける意味が薄い)。
+
+   **なぜこの 2 階層にするか**:
+   - agent から見える MCP tool 名は短くシンプルに保ちたい (`mcp__deshi__deshi_daemon_run_skill` のように deshi が二重になるのを避ける)
+   - 一方で HTTP path / handler / file を見たときに「これは deshi 系の処理だ」と即座にわかるようにしたい (host 側 code を読む人 / ログを見る人視点)
+   - 両者を分離することで両方の要件を満たす
+
+4. **handler の物理配置**
+   - host-tools-server に登録する handler 関数は **`src/deshi/host-tools/<httpName>.ts`** に配置する (`<httpName>` は HTTP path 側の名前 = handler key と一致)
+   - `src/deshi/host-tools/index.ts` の `handlers` barrel に登録する
+   - 例: `src/deshi/host-tools/health.ts` → `handlers.health`
+   - 例: `src/deshi/host-tools/deshi_daemon_run_skill.ts` → `handlers.deshi_daemon_run_skill`
+
+5. **container 内 MCP stdio スクリプトの物理配置**
    - MCP stdio スクリプトは **`container/skills/deshi-add-host-tools/deshi-mcp-stdio.ts`** に配置する
    - 理由: container 起動時に `container/skills/<name>/` が `/app/skills/<name>/` に read-only mount される (`src/container-runner.ts:317-321`)。container 内で実行する Bun スクリプトはこの mount で参照する
    - これは ADR-0002 の Decision「Container Skills: `container/skills/deshi-*`」の正規ルート
 
-5. **upstream `TOOL_ALLOWLIST` は touch しない**
+6. **upstream `TOOL_ALLOWLIST` は touch しない**
    - upstream の `container/agent-runner/src/providers/claude.ts` が `Object.keys(this.mcpServers).map(mcpAllowPattern)` で allowlist を自動生成する (L294-297)
    - `container.json` の `mcpServers` に `deshi` を登録すれば `mcp__deshi__*` は自動的に allowedTools に含まれる
    - したがって `TOOL_ALLOWLIST` への侵入は不要 (ADR-0002 namespace 隔離を維持)
@@ -58,11 +89,13 @@ ADR-0002 制定時点では MCP は具体的な対象に入っていなかった
 - agent から見て failure mode が分かりやすい — `daemon_*` の失敗は daemon 問題、`tool_*` の失敗は host 処理問題、`health` の失敗は bridge 自体の問題
 - ADR-0002 を完全に守れる — upstream ファイルへの侵襲ゼロ、deshi コードは `src/deshi/**` と `container/skills/deshi-*/` に閉じる
 - skill 実行時の動的コピー操作が不要 — `container/skills/` に直接置けば container から読める
+- 2 階層命名により、agent から見える tool 名は短く保ちつつ、host 側の log / ファイル / handler key を見たときに deshi 系であることが即座にわかる
 
 ### Trade-offs
 
 - カテゴリの判断が境界事例で迷う場合がある (例: deshi daemon を経由して host 処理をするケース)。原則は「直接の通信相手が deshi daemon なら `daemon_*`」「直接の通信相手が host のシステムリソースなら `tool_*`」とする
 - MCP server を複数立てたくなった時には ADR を起こして本決定を見直す必要がある
+- 2 階層命名により、各 `server.tool(...)` 呼び出しで agent 名と HTTP path 名の両方を書く必要がある (規約: `server.tool('X', ..., callHostTool('deshi_X', args))` を守れば機械的)
 
 ## See also
 

@@ -93,14 +93,18 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────
-// 工程 4/5 以降で追加する tool は以下のパターンで:
+// 新 tool を追加するときのパターン (ADR-0009 / .deshi/docs/mcp-tool-naming.md):
 //
 // server.tool(
-//   'daemon_run_skill',
+//   'daemon_run_skill',                                       // ← agent 側 (mcp__deshi__daemon_run_skill)
 //   '<description>',
 //   { /* zod schema */ },
-//   async (args) => callHostTool('daemon_run_skill', args),
+//   async (args) => callHostTool('deshi_daemon_run_skill', args), // ← HTTP 側 (POST /tools/deshi_daemon_run_skill)
 // );
+//
+// agent 側はカテゴリ規約 (health / daemon_* / tool_*) に従って短く、
+// HTTP 側は host-tools-server 側で deshi 系であることを明示するため
+// deshi_ prefix を付ける (health は例外で両方とも prefix なし)。
 // ─────────────────────────────────────────────────────────────
 
 const transport = new StdioServerTransport();

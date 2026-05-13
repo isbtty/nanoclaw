@@ -200,12 +200,13 @@ git reset --hard deshi-backup-pre-upstream-<timestamp>
 container 内 agent に公開する MCP tool の命名規則:
 
 - **MCP server 名は単一 `deshi`** — `container.json` の `mcpServers` の key として登録。agent からは `mcp__deshi__<tool>` で見える。
-- **tool 名は 3 カテゴリ**:
+- **tool 名は 3 カテゴリ** (agent から見える名前):
   - `health` — bridge 自身の生存確認 (prefix なし、例外)
   - `daemon_<name>` — deshi daemon の API を叩く (例: `daemon_run_skill`)
   - `tool_<name>` — host で完結する処理 (将来例: `tool_kindle_capture`)
+- **agent 名と HTTP path / handler key は 2 階層命名** — agent 側は短く (`daemon_run_skill`)、HTTP 側は `deshi_` prefix 付き (`POST /tools/deshi_daemon_run_skill`)。stdio MCP server で明示的に mapping (`server.tool('daemon_run_skill', ..., callHostTool('deshi_daemon_run_skill', args))`)。`health` だけは両方 prefix なし。
 - **物理配置**:
-  - host 用 handler: `src/deshi/host-tools/<name>.ts` (barrel `index.ts` に登録)
+  - host 用 handler: `src/deshi/host-tools/<httpName>.ts` (`<httpName>` = `deshi_<...>` または `health`、barrel `index.ts` に登録)
   - container 用 MCP stdio: `container/skills/deshi-add-host-tools/deshi-mcp-stdio.ts`
 - **upstream `TOOL_ALLOWLIST` は touch しない** — `mcpServers` から自動生成される (ADR-0002 維持)
 
