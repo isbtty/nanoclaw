@@ -4,11 +4,16 @@
  * container 内 agent からの MCP tool 呼び出しを受け取り、host 側で動いている
  * host-tools-server (http://host.docker.internal:5180) に HTTP POST で転送する。
  *
- * 工程 3 時点で公開する tool:
- *   - health: bridge 自身の生存確認 (`POST /tools/health`)
+ * 公開する tool:
+ *   - health                  : bridge 自身の生存確認 (`POST /tools/health`)
+ *   - daemon_run_skill        : deshi daemon の POST /run を叩く (工程 5)
+ *   - daemon_poll_until_done  : deshi daemon の GET /jobs/:jobId を long polling
  *
- * 工程 4 / 5 以降で deshi daemon を叩く tool (`daemon_*`) や、host 完結処理の
- * tool (`tool_*`) を追加していく。命名規則は ADR-0009 参照。
+ * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
+ * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
+ * 呼び出しで明示的に mapping する (ADR-0009)。
+ *
+ * 命名規則と新 tool 追加手順: `.deshi/docs/mcp-tool-naming.md`、`.deshi/adr/0009-mcp-tool-naming.md`。
  *
  * Env:
  *   DESHI_HOST_URL (default: http://host.docker.internal:5180)
@@ -16,6 +21,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
 
@@ -93,19 +99,58 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────
-// 新 tool を追加するときのパターン (ADR-0009 / .deshi/docs/mcp-tool-naming.md):
-//
-// server.tool(
-//   'daemon_run_skill',                                       // ← agent 側 (mcp__deshi__daemon_run_skill)
-//   '<description>',
-//   { /* zod schema */ },
-//   async (args) => callHostTool('deshi_daemon_run_skill', args), // ← HTTP 側 (POST /tools/deshi_daemon_run_skill)
-// );
-//
-// agent 側はカテゴリ規約 (health / daemon_* / tool_*) に従って短く、
-// HTTP 側は host-tools-server 側で deshi 系であることを明示するため
-// deshi_ prefix を付ける (health は例外で両方とも prefix なし)。
+// daemon_run_skill — deshi daemon に skill 実行を依頼 (POST /run)
 // ─────────────────────────────────────────────────────────────
+const channelContextSchema = z.object({
+  channel: z.string().describe('Source platform name, e.g. "telegram" | "line" | "slack"'),
+  platformId: z.string().describe('User identifier on the source platform'),
+  threadId: z.string().describe('Thread / group / channel id ("dm" for direct messages)'),
+  isGroup: z.boolean().describe('True if the source thread is a group/channel, false for DMs'),
+});
+
+const allowedSkillNames = z.enum([
+  'sync',
+  'ingest',
+  'ingest-business-cards',
+  'ingest-diary',
+  'ingest-kindle',
+]);
+
+server.tool(
+  'daemon_run_skill',
+  'Submit a deshi skill for asynchronous execution. Returns a jobId; pair this call with daemon_poll_until_done to wait for the result. Only the 5 skills in NANOCLAW_SKILL_ALLOWLIST are allowed (others fail at the daemon).',
+  {
+    skillName: allowedSkillNames.describe(
+      'Skill name (must be in NANOCLAW_SKILL_ALLOWLIST: sync / ingest / ingest-business-cards / ingest-diary / ingest-kindle)',
+    ),
+    args: z
+      .string()
+      .optional()
+      .describe('Optional arguments string appended after the skill name (e.g. "--full")'),
+    channelContext: channelContextSchema,
+  },
+  async (args) => callHostTool('deshi_daemon_run_skill', args),
+);
+
+// ─────────────────────────────────────────────────────────────
+// daemon_poll_until_done — long polling で daemon の job 完了を待つ
+//   host-tools-server 側で internal retry を回すため、agent は 1 回呼ぶだけで
+//   completed/failed の最終状態を受け取れる。retry ループは書かなくて良い。
+// ─────────────────────────────────────────────────────────────
+server.tool(
+  'daemon_poll_until_done',
+  'Wait for a job submitted via daemon_run_skill to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion).',
+  {
+    jobId: z.string().describe('jobId returned by daemon_run_skill'),
+    timeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Max wait time in milliseconds (default 1800000 = 30 minutes)'),
+  },
+  async (args) => callHostTool('deshi_daemon_poll_until_done', args),
+);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -178,18 +178,17 @@ curl -s -X POST http://127.0.0.1:5180/tools/deshi_daemon_foo \
 
 ## agent から見える tool 名一覧 (現状)
 
-工程 3 時点:
+| agent 名 | HTTP path | カテゴリ | 説明 |
+|---|---|---|---|
+| `mcp__deshi__health` | `POST /tools/health` / `GET /health` | (例外) | bridge 自身の生存確認、registered handlers 一覧 |
+| `mcp__deshi__daemon_run_skill` | `POST /tools/deshi_daemon_run_skill` | daemon | deshi daemon の `POST /run` を叩いて jobId を返す。auto-auth (localhost + channelContext) |
+| `mcp__deshi__daemon_poll_until_done` | `POST /tools/deshi_daemon_poll_until_done` | daemon | jobId に対する long polling。completed/failed の最終状態を 1 回のレスポンスで返す。daemonRestarted / timedOut フラグあり |
 
-| agent 名 | HTTP path | 説明 |
-|---|---|---|
-| `mcp__deshi__health` | `POST /tools/health` | bridge 自身の生存確認、registered handlers の一覧返却 |
+agent から `daemon_run_skill` で投げられる skill は deshi 側 `NANOCLAW_SKILL_ALLOWLIST` で 5 個 (`sync` / `ingest` / `ingest-business-cards` / `ingest-diary` / `ingest-kindle`) に絞られる。MCP の `z.enum` でも入力時点で弾く。
 
-工程 4 / 5 以降で追加予定:
-
-| agent 名 (予定) | HTTP path (予定) | 説明 |
-|---|---|---|
-| `mcp__deshi__daemon_run_skill` | `POST /tools/deshi_daemon_run_skill` | deshi daemon の `POST /run` を叩く |
-| `mcp__deshi__daemon_poll_job` | `POST /tools/deshi_daemon_poll_job` | deshi daemon の `GET /jobs/:id` を叩く |
+将来 `tool_*` カテゴリ (host 完結処理) を追加する場合は同じ 2 階層命名で:
+- agent: `mcp__deshi__tool_kindle_capture`
+- HTTP: `POST /tools/deshi_tool_kindle_capture`
 
 ## upstream との関係
 
