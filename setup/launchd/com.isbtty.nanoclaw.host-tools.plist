@@ -5,8 +5,10 @@
   This file is a template. Before loading into launchd, replace the placeholders
   below with the values for your install:
 
-    __PROJECT_ROOT__   absolute path to the nanoclaw checkout (e.g. /Users/<you>/code/nanoclaw)
-    __PNPM_PATH__      absolute path to the pnpm binary (run `which pnpm` to find it)
+    __PROJECT_ROOT__                absolute path to the nanoclaw checkout (e.g. /Users/<you>/code/nanoclaw)
+    __PNPM_PATH__                   absolute path to the pnpm binary (run `which pnpm` to find it)
+    __DESHI_DAEMON_URL__            deshi daemon の listen URL (default: http://localhost:3100)
+    __DESHI_DAEMON_DEVICE_SECRET__  deshi daemon の DAEMON_DEVICE_SECRET と同じ値 (GET /jobs/:jobId 用 Bearer)
 
   After substitution, copy the resulting file to:
     ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist
@@ -42,6 +44,12 @@
     <dict>
         <key>DESHI_HOST_TOOLS_PORT</key>
         <string>5180</string>
+
+        <key>DESHI_DAEMON_URL</key>
+        <string>__DESHI_DAEMON_URL__</string>
+
+        <key>DESHI_DAEMON_DEVICE_SECRET</key>
+        <string>__DESHI_DAEMON_DEVICE_SECRET__</string>
     </dict>
 
     <key>StandardOutPath</key>

@@ -101,6 +101,12 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
   res.end('not found');
 });
 
+// long polling 対応: deshi_daemon_poll_until_done は最大 30 分かかるため、
+// Node default の requestTimeout (300s) / headersTimeout を無制限化する。
+// 必要なら handler 側で timeoutMs を尊重して切る。
+server.requestTimeout = 0;
+server.headersTimeout = 0;
+
 server.listen(PORT, '127.0.0.1', () => {
   log(`listening on http://127.0.0.1:${PORT}`);
   log(`registered handlers: ${Object.keys(handlers).join(', ')}`);
