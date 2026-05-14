@@ -81,6 +81,12 @@ ADR-0002 制定時点では MCP は具体的な対象に入っていなかった
    - `container.json` の `mcpServers` に `deshi` を登録すれば `mcp__deshi__*` は自動的に allowedTools に含まれる
    - したがって `TOOL_ALLOWLIST` への侵入は不要 (ADR-0002 namespace 隔離を維持)
 
+7. **`container/CLAUDE.md` への限定的な追記を ADR-0002 の例外として許容する**
+   - 工程 5 で導入する `mcp__deshi__daemon_*` の使い方ガイド (どの skill が呼べるか、2 step 実行パターン、結果分岐) は **agent が必ず読むべき技術ドキュメント** であり、`container/CLAUDE.md` に書く以外に自動 include される配置がない (container/skills/<name>/CLAUDE.md は agent-runner が自動読込しない、`groups/*/CLAUDE.local.md` は `.gitignore` 済みで顧客間共有不可)
+   - そのため `container/CLAUDE.md` の末尾に **`<!-- BEGIN deshi: host-tools MCP -->` 〜 `<!-- END deshi: host-tools MCP -->`** で囲まれたブロックを追記することを例外として許容する
+   - 追記内容は **public でも問題ない技術ガイドに限定** する (顧客固有情報・persona / floor 設定・機密 はここに書かない。それらは将来 jibot さんの Q4 提案する private 設定 repo + Docker volume mount で別途注入する設計に乗せる: isbtty/deshi#189 #issuecomment-4418940383)
+   - 衝突対策: `/deshi-update-from-upstream` 実行時に upstream 側でこのファイルが変更されても、deshi 追記ブロックは末尾 + コメント目印で識別できるため衝突解決が容易。merge driver 追加までは必要ない
+
 ## Consequences
 
 ### Positive
@@ -96,6 +102,7 @@ ADR-0002 制定時点では MCP は具体的な対象に入っていなかった
 - カテゴリの判断が境界事例で迷う場合がある (例: deshi daemon を経由して host 処理をするケース)。原則は「直接の通信相手が deshi daemon なら `daemon_*`」「直接の通信相手が host のシステムリソースなら `tool_*`」とする
 - MCP server を複数立てたくなった時には ADR を起こして本決定を見直す必要がある
 - 2 階層命名により、各 `server.tool(...)` 呼び出しで agent 名と HTTP path 名の両方を書く必要がある (規約: `server.tool('X', ..., callHostTool('deshi_X', args))` を守れば機械的)
+- `container/CLAUDE.md` への追記は upstream 由来ファイルへの侵入なので、upstream 側で同ファイルが大幅に変わると `/deshi-update-from-upstream` で衝突しうる (低頻度想定、衝突時は手動マージで吸収)
 
 ## See also
 
