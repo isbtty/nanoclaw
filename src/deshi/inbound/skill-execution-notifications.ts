@@ -39,7 +39,8 @@ import { randomUUID } from 'node:crypto';
 
 import { getMessagingGroupByPlatform, getMessagingGroupAgents } from '../../db/messaging-groups.js';
 import { isSafeAttachmentName } from '../../attachment-safety.js';
-import { resolveSession, sessionDir, writeOutboundDirect } from '../../session-manager.js';
+import { openOutboundDbRw } from '../../db/session-db.js';
+import { resolveSession, outboundDbPath, sessionDir } from '../../session-manager.js';
 
 /**
  * Channel ごとの supportsThreads 値の静的マップ (ADR-0010 §5)。
@@ -201,6 +202,42 @@ function computeEffectiveSessionMode(
 }
 
 /**
+ * messages_out への INSERT を host 側 writable handle で実行する。
+ *
+ * 内容的には upstream `writeOutboundDirect` (session-manager.ts:382) と
+ * 同じ SQL だが、open 時に `openOutboundDb` (readonly) ではなく
+ * `openOutboundDbRw` (writable) を使う点だけが違う。コミット時に書いた
+ * doc コメント参照 — upstream の readonly バグへの一時回避。
+ *
+ * cross-mount invariant (session-manager.ts header) を守るため:
+ *   - journal_mode=DELETE (openOutboundDbRw 内で設定済み)
+ *   - 一回の write ごとに close (long-lived connection を作らない)
+ *   - 一度に書くのはこの一行だけ (concurrent writer と競合しない想定)
+ *
+ * seq は upstream と同じ `MAX(seq)+2` で偶数を維持 (host=even, container=odd)。
+ */
+function writeOutboundMessage(message: {
+  agentGroupId: string;
+  sessionId: string;
+  id: string;
+  kind: string;
+  platformId: string | null;
+  channelType: string | null;
+  threadId: string | null;
+  content: string;
+}): void {
+  const db = openOutboundDbRw(outboundDbPath(message.agentGroupId, message.sessionId));
+  try {
+    db.prepare(
+      `INSERT OR IGNORE INTO messages_out (id, seq, timestamp, kind, platform_id, channel_type, thread_id, content)
+       VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 2 FROM messages_out), datetime('now'), ?, ?, ?, ?, ?)`,
+    ).run(message.id, message.kind, message.platformId, message.channelType, message.threadId, message.content);
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * outbox ディレクトリ (`<session_dir>/outbox/<message_id>/`) を作成し、
  * 各 file を `outbox/<message_id>/<filename>` として書き込む。
  *
@@ -276,16 +313,28 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
   const filenames =
     req.files && req.files.length > 0 ? writeOutboxFiles(agent.agent_group_id, session.id, messageId, req.files) : [];
 
-  // 6. messages_out への INSERT (`writeOutboundDirect` 経由)
-  //    content schema は container 側の send_file / send_message と同じ
-  //    `{ text, files: string[] }` JSON を採用 (upstream
-  //    container/agent-runner/src/mcp-tools/core.ts:173)。
-  //    kind は 'chat' を採用 — system は内部 action 用 (delivery.ts:255)、
-  //    chat は通常配信のデフォルトで agent からも「自分の発言」として
-  //    認識される (会話継続性の維持、issue #247 の決定)。
-  //    delivery routing は session の messaging_group の (channel_type,
-  //    platform_id) と (req.threadId | session.thread_id) で決まる。
-  writeOutboundDirect(agent.agent_group_id, session.id, {
+  // 6. messages_out への INSERT
+  //
+  // content schema は container 側の send_file / send_message と同じ
+  // `{ text, files: string[] }` JSON を採用 (upstream
+  // container/agent-runner/src/mcp-tools/core.ts:173)。
+  // kind は 'chat' を採用 — system は内部 action 用 (delivery.ts:255)、
+  // chat は通常配信のデフォルトで agent からも「自分の発言」として
+  // 認識される (会話継続性の維持、issue #247 の決定)。
+  // delivery routing は session の messaging_group の (channel_type,
+  // platform_id) と (req.threadId | session.thread_id) で決まる。
+  //
+  // なぜ upstream の `writeOutboundDirect` を使わず自前で SQL を書くか:
+  //   upstream の writeOutboundDirect は内部で `openOutboundDb` (readonly)
+  //   を呼んでおり、 better-sqlite3 の readonly flag が effective になる
+  //   環境 (= テスト環境 / 通常運用) では INSERT が "attempt to write a
+  //   readonly database" で fail する。本来 `openOutboundDbRw` を使うべき
+  //   実装上のバグ (upstream 由来) で、本 inbound handler では writable
+  //   ハンドルで直接書き込む。upstream 修正は本 PR スコープ外。
+  //   修正されたら本ブロックを `writeOutboundDirect` 呼び出しに戻して良い。
+  writeOutboundMessage({
+    agentGroupId: agent.agent_group_id,
+    sessionId: session.id,
     id: messageId,
     kind: 'chat',
     platformId: mg.platform_id,
