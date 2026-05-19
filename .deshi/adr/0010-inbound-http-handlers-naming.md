@@ -83,6 +83,19 @@ ADR-0009 を変更して両ケースを統一する選択肢もあるが、MCP �
 
    upstream で `writeOutboundDirect` の opener が writable に修正されたタイミングで、本 helper を削除して `writeOutboundDirect` 呼び出しに戻す。handler 内 doc コメントにも経緯と巻き戻し方法を明記済み。
 
+7. **host-tools-server プロセスでの central DB 初期化**
+
+   inbound handler は `getMessagingGroupByPlatform` / `getMessagingGroupAgents` / `resolveSession` 等を介して **central DB (`data/v2.db`)** を読み書きする。host-tools-server は host 本体 (`src/index.ts`) とは別プロセスで起動するため、host-tools-server プロセス内で **独自に `initDb()` を呼ぶ必要がある**。
+
+   呼び出し位置: `src/deshi/host-tools-server.ts` の listen 前 (top-level)。migrations は実行しない (= host 本体側で既に走っている前提)。host-tools-server 側で重複 migrate を走らせると不要な race を引き起こす。
+
+   なぜ別プロセスでも 1 つの DB ファイルを同時に握って良いか:
+   - SQLite は WAL モード (`initDb` 内で `pragma journal_mode = WAL`) で multi-reader / single-writer をサポートする
+   - host-tools-server は基本的に **読み取り中心** + ピンポイントな write (`resolveSession` の新規 session 作成、`messages_out` への INSERT)。host 本体側の writer と同時 write がぶつかってもブロックで吸収される
+   - session DB (`inbound.db` / `outbound.db`) は別ファイルなので影響なし。cross-mount invariant (open-write-close per op) は session DB 限定の制約で、central DB には適用されない
+
+   この決定は §5 の「別プロセスだから channel registry が空」と対称: 別プロセスである以上、process-global な状態 (channel registry、central DB connection) は **各プロセスで独自に立ち上げる** 必要がある、という一般則の系。本決定を漏らすと "Database not initialized. Call initDb() first." で実行時 fail する (テストは `initTestDb()` で自前 init するため検出できない)。
+
 ## Consequences
 
 ### Positive
@@ -91,6 +104,7 @@ ADR-0009 を変更して両ケースを統一する選択肢もあるが、MCP �
 - ADR-0009 を変更せず追加で拡張できる → 既存 MCP-backed handler の改名リスクを回避
 - 判断基準が 1 点 (MCP 経由か否か) で明確 → 将来 handler 追加時に迷わない
 - 認証ポリシーを系統ごとに分離 (MCP 経由 = loopback 前提無認証 / inbound = Bearer 必須) → 露出面に応じた適切な防御
+- §7 で「inbound handler は中央 DB を触るので host-tools-server プロセス内での initDb 呼び出しが必須」と明記したので、将来 inbound handler を追加する人がプロセス境界の罠 (test では pass するが本番起動時に "Database not initialized" で fail) を踏みにくい
 
 ### Trade-offs
 
@@ -98,6 +112,7 @@ ADR-0009 を変更して両ケースを統一する選択肢もあるが、MCP �
 - `adapterSupportsThreads` の静的マップを upstream 実装と二重管理することになる → 同期忘れリスクが残る。新規 channel 追加時に inbound 側マップ更新を CONTRIBUTING / レビュー観点に含める運用で吸収する
 - inbound endpoint は外部公開面が増えるため、認証 / size limit / レート制限の防御を handler 単位で意識する必要がある
 - upstream `writeOutboundDirect` の readonly バグへの一時回避として inbound 側に `writeOutboundMessage` ヘルパを保持している。upstream 修正後に巻き戻しが必要で、その追跡が必要 (upstream PR 提出時に本 ADR の "See also" に追記する)
+- host-tools-server プロセス内で central DB を独自に init するため、host 本体と host-tools-server で central DB connection が 2 つ存在する。SQLite WAL モードで safe だが、運用視点で「DB 接続が 2 か所」になる事実は意識が必要
 
 ## See also
 

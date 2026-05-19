@@ -31,6 +31,13 @@
  *      undefined が返るので、inbound 側に hard-code した SUPPORTS_THREADS を
  *      参照する。新規 channel が upstream に追加された場合は本マップへの
  *      追加が必要 (CONTRIBUTING / PR レビュー観点で吸収)。
+ *
+ * 注意 (ADR-0010 §7):
+ *   本 handler は getMessagingGroupByPlatform / resolveSession 等を介して
+ *   central DB (`data/v2.db`) を読み書きする。host-tools-server プロセス内で
+ *   `initDb()` が事前に呼ばれている前提 (`src/deshi/host-tools-server.ts` の
+ *   起動シーケンス参照)。host 本体とは別プロセスで起動する以上、本プロセス
+ *   独自に DB connection を開く必要がある。
  */
 
 import path from 'node:path';

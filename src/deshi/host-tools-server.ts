@@ -30,12 +30,31 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
+import path from 'node:path';
 
+import { DATA_DIR } from '../config.js';
+import { initDb } from '../db/index.js';
 import { handlers } from './host-tools/index.js';
 import { inboundHandlers } from './inbound/index.js';
 import { InboundHandlerError } from './inbound/errors.js';
 
 const PORT = parseInt(process.env.DESHI_HOST_TOOLS_PORT ?? '5180', 10);
+
+/**
+ * central DB (`data/v2.db`) を本プロセス内で init する (ADR-0010 §7)。
+ *
+ * inbound handler は getMessagingGroupByPlatform / resolveSession 等を介して
+ * central DB を読み書きするため、host-tools-server プロセスでも独自に
+ * `initDb()` を呼んでおく必要がある。host 本体 (`src/index.ts`) とは別
+ * プロセスで起動するため、host 本体の init は引き継がれない。
+ *
+ * migrations は実行しない: schema 反映は host 本体側で既に走っている前提。
+ * host-tools-server 側で重複 migrate を走らせると不要な race を引き起こす。
+ *
+ * SQLite WAL モード (`initDb` 内で設定) で multi-reader / single-writer を
+ * 確保しているため、host 本体と同じ DB ファイルを同時に握って問題ない。
+ */
+initDb(path.join(DATA_DIR, 'v2.db'));
 
 function log(msg: string): void {
   const ts = new Date().toISOString();
