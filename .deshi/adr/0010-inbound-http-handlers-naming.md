@@ -56,9 +56,11 @@ ADR-0009 を変更して両ケースを統一する選択肢もあるが、MCP �
 
    既存の `POST /tools/<name>` dispatch と並列に、`POST /inbound/deshi/<name>` dispatch を追加する。物理プロセスは 1 つのまま、論理的に系統を分離する。
 
-4. **認証**
+4. **認証 + body size limit**
 
    inbound endpoint は外部から叩かれるため、`Authorization: Bearer <DESHI_DAEMON_DEVICE_SECRET>` を **dispatch 側で一括検証** する (`timingSafeEqual` でタイミング攻撃対策)。MCP-backed handler は loopback 前提で無認証だったが、inbound は外部 push なので認証必須。
+
+   body size は base64 inline 添付ファイルを想定して **20 MiB** まで許容 (`src/deshi/host-tools-server.ts` の `readJsonBody` 内で `MAX_BODY_BYTES` として規定、超過時は途中で接続を切って 400)。MCP-backed handler 側は元々こんなに大きい body を投げないため共有上限で問題なし。将来 10 MiB 超のファイルを扱う必要が出たら multipart/form-data への移行を検討する。
 
 5. **`adapterSupportsThreads` の取得方法 — 静的マップで保持**
 
@@ -72,6 +74,14 @@ ADR-0009 を変更して両ケースを統一する選択肢もあるが、MCP �
    採用する静的マップは upstream の `src/channels/<channel>.ts` の `supportsThreads` 値と一致させる。新規 channel が upstream に追加された / 既存 channel の `supportsThreads` が変わった場合、inbound 側マップを追随する責任は **deshi 側コミッタが負う** (CI チェックは ADR-0007 の `verify-layout.ts` 実装時に統合する候補)。
 
    マップは inbound handler ファイル内で定義し、コメントで「同期忘れリスクと根拠」を明記する。
+
+6. **upstream `writeOutboundDirect` の readonly バグへの一時回避**
+
+   inbound handler は messages_out への INSERT が必要だが、upstream `src/session-manager.ts:382` の `writeOutboundDirect` は内部で `openOutboundDb` (readonly handle) を呼んでおり、INSERT が `attempt to write a readonly database` で fail する。同種のバグは commit `8d022fd` で host-sweep 側 (`resetStuckProcessingRows`) が `openOutboundDbRw` への切り替えで修正されたが、`writeOutboundDirect` 側は未修正のまま残っている。
+
+   ADR-0002 を守るため upstream を編集せず、inbound 側に `writeOutboundMessage` ヘルパを置いて `openOutboundDbRw` を直叩きする。SQL 本体は upstream `writeOutboundDirect` と同一 (`INSERT OR IGNORE`、seq は `MAX(seq)+2` で偶数を維持して host=even / container=odd の不変条件を守る)。cross-mount invariant (journal_mode=DELETE、open-write-close per op、one writer per file) も `openOutboundDbRw` が内部で守る。
+
+   upstream で `writeOutboundDirect` の opener が writable に修正されたタイミングで、本 helper を削除して `writeOutboundDirect` 呼び出しに戻す。handler 内 doc コメントにも経緯と巻き戻し方法を明記済み。
 
 ## Consequences
 
@@ -87,6 +97,7 @@ ADR-0009 を変更して両ケースを統一する選択肢もあるが、MCP �
 - handler 命名規則が 2 系統 (snake_case + kebab-case) に分かれるため、handler を追加する人が ADR-0009 / ADR-0010 のどちらに従うか判断する必要がある (判断基準は明確なので運用上は問題なし想定)
 - `adapterSupportsThreads` の静的マップを upstream 実装と二重管理することになる → 同期忘れリスクが残る。新規 channel 追加時に inbound 側マップ更新を CONTRIBUTING / レビュー観点に含める運用で吸収する
 - inbound endpoint は外部公開面が増えるため、認証 / size limit / レート制限の防御を handler 単位で意識する必要がある
+- upstream `writeOutboundDirect` の readonly バグへの一時回避として inbound 側に `writeOutboundMessage` ヘルパを保持している。upstream 修正後に巻き戻しが必要で、その追跡が必要 (upstream PR 提出時に本 ADR の "See also" に追記する)
 
 ## See also
 
@@ -97,3 +108,4 @@ ADR-0009 を変更して両ケースを統一する選択肢もあるが、MCP �
 - `src/deshi/inbound/skill-execution-notifications.ts` — 本 ADR で導入する最初の inbound handler
 - isbtty/deshi#247 — inbound endpoint 設計 issue (本 ADR の起点)
 - isbtty/deshi#205 — deshi 起点通知の全体設計 (#247 の親)
+- isbtty/nanoclaw#6 — 本 ADR で規定した inbound endpoint の初回実装 PR (Decision 6 の workaround を含む)
