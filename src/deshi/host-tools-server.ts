@@ -33,7 +33,7 @@ import { timingSafeEqual } from 'node:crypto';
 
 import { handlers } from './host-tools/index.js';
 import { inboundHandlers } from './inbound/index.js';
-import { InboundHandlerError } from './inbound/skill-execution-notifications.js';
+import { InboundHandlerError } from './inbound/errors.js';
 
 const PORT = parseInt(process.env.DESHI_HOST_TOOLS_PORT ?? '5180', 10);
 

@@ -41,6 +41,7 @@ import { getMessagingGroupByPlatform, getMessagingGroupAgents } from '../../db/m
 import { isSafeAttachmentName } from '../../attachment-safety.js';
 import { openOutboundDbRw } from '../../db/session-db.js';
 import { resolveSession, outboundDbPath, sessionDir } from '../../session-manager.js';
+import { InboundHandlerError } from './errors.js';
 
 /**
  * Channel ごとの supportsThreads 値の静的マップ (ADR-0010 §5)。
@@ -109,16 +110,6 @@ export interface SkillExecutionNotificationResponse {
   ok: true;
   sessionId: string;
   messageId: string;
-}
-
-export class InboundHandlerError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'InboundHandlerError';
-  }
 }
 
 export async function skillExecutionNotificationsHandler(body: unknown): Promise<SkillExecutionNotificationResponse> {
