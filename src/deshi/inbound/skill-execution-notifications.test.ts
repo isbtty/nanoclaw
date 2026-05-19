@@ -48,7 +48,6 @@ import {
 } from '../../db/index.js';
 import { outboundDbPath, sessionDir } from '../../session-manager.js';
 import {
-  InboundHandlerError,
   skillExecutionNotificationsHandler,
   type SkillExecutionNotificationResponse,
 } from './skill-execution-notifications.js';
@@ -134,28 +133,34 @@ afterEach(() => {
 
 describe('skillExecutionNotificationsHandler — validation', () => {
   it('rejects non-object body with 400', async () => {
-    await expect(skillExecutionNotificationsHandler(null)).rejects.toBeInstanceOf(InboundHandlerError);
-    await expect(skillExecutionNotificationsHandler('string')).rejects.toMatchObject({ status: 400 });
+    await expect(skillExecutionNotificationsHandler(null)).rejects.toMatchObject({
+      status: 400,
+      message: 'request body must be a JSON object',
+    });
+    await expect(skillExecutionNotificationsHandler('string')).rejects.toMatchObject({
+      status: 400,
+      message: 'request body must be a JSON object',
+    });
   });
 
   it('rejects missing channel with 400', async () => {
     await expect(skillExecutionNotificationsHandler({ chatId: 'x', message: 'hi' })).rejects.toMatchObject({
       status: 400,
-      message: /channel/,
+      message: 'channel is required',
     });
   });
 
   it('rejects missing chatId with 400', async () => {
     await expect(skillExecutionNotificationsHandler({ channel: 'telegram', message: 'hi' })).rejects.toMatchObject({
       status: 400,
-      message: /chatId/,
+      message: 'chatId is required',
     });
   });
 
   it('rejects missing message with 400', async () => {
     await expect(skillExecutionNotificationsHandler({ channel: 'telegram', chatId: 'x' })).rejects.toMatchObject({
       status: 400,
-      message: /message/,
+      message: 'message is required',
     });
   });
 
@@ -168,7 +173,7 @@ describe('skillExecutionNotificationsHandler — validation', () => {
         threadId: 123,
         message: 'hi',
       }),
-    ).rejects.toMatchObject({ status: 400, message: /threadId/ });
+    ).rejects.toMatchObject({ status: 400, message: 'threadId must be string or null' });
   });
 
   it('rejects malformed files array with 400', async () => {
@@ -180,7 +185,7 @@ describe('skillExecutionNotificationsHandler — validation', () => {
         message: 'hi',
         files: 'not-an-array',
       }),
-    ).rejects.toMatchObject({ status: 400, message: /files must be an array/ });
+    ).rejects.toMatchObject({ status: 400, message: 'files must be an array' });
 
     await expect(
       skillExecutionNotificationsHandler({
@@ -189,7 +194,7 @@ describe('skillExecutionNotificationsHandler — validation', () => {
         message: 'hi',
         files: [{ contentBase64: 'AAA' }],
       }),
-    ).rejects.toMatchObject({ status: 400, message: /filename is required/ });
+    ).rejects.toMatchObject({ status: 400, message: 'files[0].filename is required' });
   });
 
   it('rejects unsafe filename with 400 (path traversal)', async () => {
@@ -201,7 +206,7 @@ describe('skillExecutionNotificationsHandler — validation', () => {
         message: 'hi',
         files: [{ filename: '../escape.txt', contentBase64: 'AAA' }],
       }),
-    ).rejects.toMatchObject({ status: 400, message: /unsafe filename/ });
+    ).rejects.toMatchObject({ status: 400, message: 'unsafe filename: ../escape.txt' });
   });
 });
 
@@ -214,7 +219,10 @@ describe('skillExecutionNotificationsHandler — lookup failures', () => {
         chatId: 'unknown',
         message: 'hi',
       }),
-    ).rejects.toMatchObject({ status: 404, message: /messaging_group not found/ });
+    ).rejects.toMatchObject({
+      status: 404,
+      message: 'messaging_group not found for telegram/unknown',
+    });
   });
 
   it('returns 404 when agent not wired to messaging_group', async () => {
@@ -234,7 +242,10 @@ describe('skillExecutionNotificationsHandler — lookup failures', () => {
         chatId: 'tg:orphan',
         message: 'hi',
       }),
-    ).rejects.toMatchObject({ status: 404, message: /no agent wired/ });
+    ).rejects.toMatchObject({
+      status: 404,
+      message: 'no agent wired to messaging_group mg-orphan',
+    });
   });
 });
 
