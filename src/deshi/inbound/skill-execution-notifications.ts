@@ -121,6 +121,81 @@ export class InboundHandlerError extends Error {
   }
 }
 
+export async function skillExecutionNotificationsHandler(body: unknown): Promise<SkillExecutionNotificationResponse> {
+  const req = validateRequest(body);
+
+  // 1. messaging_group lookup — どの chat への通知か特定
+  const mg = getMessagingGroupByPlatform(req.channel, req.chatId);
+  if (!mg) {
+    throw new InboundHandlerError(404, `messaging_group not found for ${req.channel}/${req.chatId}`);
+  }
+
+  // 2. wiring lookup — どの agent_group に紐づくか特定
+  //    1 nanoclaw = 1 deshi 前提 (ADR-0010 §5 と issue #247 の想定) のため
+  //    agents は 1 件想定。複数 wiring されているケースは現状非対応。
+  const agents = getMessagingGroupAgents(mg.id);
+  if (agents.length === 0) {
+    throw new InboundHandlerError(404, `no agent wired to messaging_group ${mg.id}`);
+  }
+  const agent = agents[0]!;
+
+  // 3. effectiveSessionMode 計算 (upstream router と同じロジック)
+  const adapterSupportsThreads = SUPPORTS_THREADS[req.channel] ?? false;
+  const effectiveSessionMode = computeEffectiveSessionMode(agent.session_mode, adapterSupportsThreads, mg.is_group);
+
+  // 4. session ensure
+  //    ユーザー依頼時に router 経由で作られた session と同じ session を引く。
+  //    存在しない場合は新規作成 (cron task など、 router 経路を通っていない
+  //    initial 通知でも動作するように)。
+  const { session } = resolveSession(agent.agent_group_id, mg.id, req.threadId ?? null, effectiveSessionMode);
+
+  // 5. attachment 書き込み (`outbox/<message_id>/<filename>`)
+  //    message_id は upstream の `isSafeAttachmentName` を通る形式 (basename
+  //    安全) で生成する。crypto.randomUUID() は `-` のみで構成されるため OK。
+  const messageId = `deshi-inbound-${randomUUID()}`;
+  const filenames =
+    req.files && req.files.length > 0 ? writeOutboxFiles(agent.agent_group_id, session.id, messageId, req.files) : [];
+
+  // 6. messages_out への INSERT
+  //
+  // content schema は container 側の send_file / send_message と同じ
+  // `{ text, files: string[] }` JSON を採用 (upstream
+  // container/agent-runner/src/mcp-tools/core.ts:173)。
+  // kind は 'chat' を採用 — system は内部 action 用 (delivery.ts:255)、
+  // chat は通常配信のデフォルトで agent からも「自分の発言」として
+  // 認識される (会話継続性の維持、issue #247 の決定)。
+  // delivery routing は session の messaging_group の (channel_type,
+  // platform_id) と (req.threadId | session.thread_id) で決まる。
+  //
+  // なぜ upstream の `writeOutboundDirect` を使わず自前で SQL を書くか:
+  //   upstream の writeOutboundDirect は内部で `openOutboundDb` (readonly)
+  //   を呼んでおり、 better-sqlite3 の readonly flag が effective になる
+  //   環境 (= テスト環境 / 通常運用) では INSERT が "attempt to write a
+  //   readonly database" で fail する。本来 `openOutboundDbRw` を使うべき
+  //   実装上のバグ (upstream 由来) で、本 inbound handler では writable
+  //   ハンドルで直接書き込む。upstream 修正は本 PR スコープ外。
+  //   修正されたら本ブロックを `writeOutboundDirect` 呼び出しに戻して良い。
+  writeOutboundMessage({
+    agentGroupId: agent.agent_group_id,
+    sessionId: session.id,
+    id: messageId,
+    kind: 'chat',
+    platformId: mg.platform_id,
+    channelType: mg.channel_type,
+    threadId: req.threadId ?? session.thread_id ?? null,
+    content: JSON.stringify({
+      text: req.message,
+      files: filenames,
+    }),
+  });
+
+  return {
+    ok: true,
+    sessionId: session.id,
+    messageId,
+  };
+}
+
 function validateRequest(body: unknown): SkillExecutionNotificationRequest {
   if (typeof body !== 'object' || body === null) {
     throw new InboundHandlerError(400, 'request body must be a JSON object');
@@ -276,79 +351,4 @@ function writeOutboxFiles(
     writtenFilenames.push(file.filename);
   }
   return writtenFilenames;
-}
-
-export async function skillExecutionNotificationsHandler(body: unknown): Promise<SkillExecutionNotificationResponse> {
-  const req = validateRequest(body);
-
-  // 1. messaging_group lookup — どの chat への通知か特定
-  const mg = getMessagingGroupByPlatform(req.channel, req.chatId);
-  if (!mg) {
-    throw new InboundHandlerError(404, `messaging_group not found for ${req.channel}/${req.chatId}`);
-  }
-
-  // 2. wiring lookup — どの agent_group に紐づくか特定
-  //    1 nanoclaw = 1 deshi 前提 (ADR-0010 §5 と issue #247 の想定) のため
-  //    agents は 1 件想定。複数 wiring されているケースは現状非対応。
-  const agents = getMessagingGroupAgents(mg.id);
-  if (agents.length === 0) {
-    throw new InboundHandlerError(404, `no agent wired to messaging_group ${mg.id}`);
-  }
-  const agent = agents[0]!;
-
-  // 3. effectiveSessionMode 計算 (upstream router と同じロジック)
-  const adapterSupportsThreads = SUPPORTS_THREADS[req.channel] ?? false;
-  const effectiveSessionMode = computeEffectiveSessionMode(agent.session_mode, adapterSupportsThreads, mg.is_group);
-
-  // 4. session ensure
-  //    ユーザー依頼時に router 経由で作られた session と同じ session を引く。
-  //    存在しない場合は新規作成 (cron task など、 router 経路を通っていない
-  //    initial 通知でも動作するように)。
-  const { session } = resolveSession(agent.agent_group_id, mg.id, req.threadId ?? null, effectiveSessionMode);
-
-  // 5. attachment 書き込み (`outbox/<message_id>/<filename>`)
-  //    message_id は upstream の `isSafeAttachmentName` を通る形式 (basename
-  //    安全) で生成する。crypto.randomUUID() は `-` のみで構成されるため OK。
-  const messageId = `deshi-inbound-${randomUUID()}`;
-  const filenames =
-    req.files && req.files.length > 0 ? writeOutboxFiles(agent.agent_group_id, session.id, messageId, req.files) : [];
-
-  // 6. messages_out への INSERT
-  //
-  // content schema は container 側の send_file / send_message と同じ
-  // `{ text, files: string[] }` JSON を採用 (upstream
-  // container/agent-runner/src/mcp-tools/core.ts:173)。
-  // kind は 'chat' を採用 — system は内部 action 用 (delivery.ts:255)、
-  // chat は通常配信のデフォルトで agent からも「自分の発言」として
-  // 認識される (会話継続性の維持、issue #247 の決定)。
-  // delivery routing は session の messaging_group の (channel_type,
-  // platform_id) と (req.threadId | session.thread_id) で決まる。
-  //
-  // なぜ upstream の `writeOutboundDirect` を使わず自前で SQL を書くか:
-  //   upstream の writeOutboundDirect は内部で `openOutboundDb` (readonly)
-  //   を呼んでおり、 better-sqlite3 の readonly flag が effective になる
-  //   環境 (= テスト環境 / 通常運用) では INSERT が "attempt to write a
-  //   readonly database" で fail する。本来 `openOutboundDbRw` を使うべき
-  //   実装上のバグ (upstream 由来) で、本 inbound handler では writable
-  //   ハンドルで直接書き込む。upstream 修正は本 PR スコープ外。
-  //   修正されたら本ブロックを `writeOutboundDirect` 呼び出しに戻して良い。
-  writeOutboundMessage({
-    agentGroupId: agent.agent_group_id,
-    sessionId: session.id,
-    id: messageId,
-    kind: 'chat',
-    platformId: mg.platform_id,
-    channelType: mg.channel_type,
-    threadId: req.threadId ?? session.thread_id ?? null,
-    content: JSON.stringify({
-      text: req.message,
-      files: filenames,
-    }),
-  });
-
-  return {
-    ok: true,
-    sessionId: session.id,
-    messageId,
-  };
 }
