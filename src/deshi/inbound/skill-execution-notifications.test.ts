@@ -459,7 +459,10 @@ describe('skillExecutionNotificationsHandler — effectiveSessionMode boundaries
  * messages_in 側は:
  *  - kind = 'webhook' (formatter が <webhook> XML タグで整形)
  *  - trigger = 0 (host countDueMessages がカウントせず、agent を起床させない)
- *  - content は { source, event, payload: {text, files} } JSON
+ *  - content は { source, event, payload: {text, files}, attachments: [...] } JSON
+ *  - attachments[].data (base64) は writeSessionMessage の
+ *    extractAttachmentFiles によって inbox/<message_id>-in/<filename> に展開され、
+ *    content の data は削除されて代わりに localPath が挿入される
  */
 describe('skillExecutionNotificationsHandler — messages_in context injection (ADR-0011)', () => {
   it('writes a corresponding messages_in row with kind=webhook + trigger=0', async () => {
@@ -483,16 +486,18 @@ describe('skillExecutionNotificationsHandler — messages_in context injection (
     expect(row.platform_id).toBe('tg:chat-1');
     expect(row.thread_id).toBeNull();
 
-    // content schema は { source, event, payload: { text, files } }
+    // content schema は { source, event, payload: { text, files }, attachments }
     const content = JSON.parse(row.content) as {
       source: string;
       event: string;
       payload: { text: string; files: string[] };
+      attachments: unknown[];
     };
     expect(content.source).toBe('deshi');
     expect(content.event).toBe('skill-execution-result');
     expect(content.payload.text).toBe('完了しました');
     expect(content.payload.files).toEqual([]);
+    expect(content.attachments).toEqual([]); // 添付なしの場合は空配列
   });
 
   it('messages_in row id is derived from messageId (suffix `-in`) so both rows can be correlated', async () => {
@@ -531,10 +536,10 @@ describe('skillExecutionNotificationsHandler — messages_in context injection (
     expect(inWebhookRows.every((r) => r.trigger === 0)).toBe(true);
   });
 
-  it('payload.files mirrors the outbox filenames (only names, not binary)', async () => {
+  it('attachments are expanded to inbox/<message_id>-in/<filename> and content carries localPath', async () => {
     const { agentId } = seedAgentAndChannel();
 
-    const payload = Buffer.from('binary content');
+    const payload = Buffer.from('binary content for agent to read');
     const result = (await skillExecutionNotificationsHandler({
       channel: 'telegram',
       chatId: 'tg:chat-1',
@@ -542,13 +547,30 @@ describe('skillExecutionNotificationsHandler — messages_in context injection (
       files: [{ filename: 'report.pdf', contentBase64: payload.toString('base64') }],
     })) as SkillExecutionNotificationResponse;
 
+    // 1) payload.files は filename 一覧 (agent 視点のメタ情報) として残る
     const inRows = readMessagesIn(agentId, result.sessionId).filter((r) => r.kind === 'webhook');
     const content = JSON.parse(inRows[0]!.content) as {
       payload: { text: string; files: string[] };
+      attachments: Array<{ name: string; localPath?: string; data?: string }>;
     };
     expect(content.payload.files).toEqual(['report.pdf']);
-    // messages_in の content には base64 binary を含めない (= 重複保存しない)
-    expect(JSON.stringify(content)).not.toContain(payload.toString('base64'));
+
+    // 2) attachments エントリは extractAttachmentFiles によって data 削除 + localPath 挿入
+    expect(content.attachments).toHaveLength(1);
+    const att = content.attachments[0]!;
+    expect(att.name).toBe('report.pdf');
+    expect(att.localPath).toBe(`inbox/${result.messageId}-in/report.pdf`);
+    expect(att.data).toBeUndefined(); // base64 は削除されていること (重複文字列を残さない)
+
+    // 3) 物理ファイルが inbox に展開されていて、agent が読めば中身が取れる
+    const inboxFilePath = path.join(
+      sessionDir(agentId, result.sessionId),
+      'inbox',
+      `${result.messageId}-in`,
+      'report.pdf',
+    );
+    expect(fs.existsSync(inboxFilePath)).toBe(true);
+    expect(fs.readFileSync(inboxFilePath)).toEqual(payload);
   });
 
   it('messages_in thread_id mirrors the messages_out routing', async () => {
