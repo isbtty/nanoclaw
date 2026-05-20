@@ -2,12 +2,17 @@
  * Handler: deshi daemon からの skill 実行結果通知を受け付け、
  *
  *   1. messages_out に書き込んで Telegram 等への即時配信を起動する
+ *      (添付ファイル本体は outbox/<message_id>/<filename> に配置)
  *   2. messages_in にも `kind='webhook', trigger=0` で書き込んで agent の
- *      context 注入のみ行う (起床はさせない)
+ *      context 注入のみ行う (起床はさせない)。添付ファイル本体は
+ *      writeSessionMessage の extractAttachmentFiles 経由で
+ *      inbox/<message_id>-in/<filename> にも展開され、agent が Read ツール等で
+ *      中身を読めるようになる
  *
  * の両方を行う (ADR-0011 パターン A)。これによりユーザーは即時に Telegram で
- * 通知を受け取り、後で「さっきの通知について」と返信した時にも agent が
- * 文脈を保持して応答できる (会話継続性の維持)。
+ * 通知 (本文+添付) を受け取り、後で「さっきの通知のファイル中身は?」のように
+ * 返信した時にも agent が文脈と添付ファイル内容まで保持して応答できる
+ * (会話継続性の維持)。
  *
  * - HTTP path: POST /inbound/deshi/skill-execution-notifications
  * - 認証: dispatch 側で Bearer <DESHI_DAEMON_DEVICE_SECRET> を一括検証
@@ -40,6 +45,13 @@
  *      undefined が返るので、inbound 側に hard-code した SUPPORTS_THREADS を
  *      参照する。新規 channel が upstream に追加された場合は本マップへの
  *      追加が必要 (CONTRIBUTING / PR レビュー観点で吸収)。
+ *
+ *   4. 添付ファイル本体は outbox と inbox の 2 か所に重複保存される
+ *      (ADR-0011 Trade-offs): Telegram 配信ルートは delivery.ts が outbox を
+ *      読み、agent 認知ルートは formatter が messages_in の content から
+ *      localPath を agent に渡して agent が inbox を Read する、という経路の
+ *      違いから発生する。session 寿命の間だけの一時コピーで session sweep /
+ *      clearOutbox で自然に消えるため運用上の負担は限定的。
  *
  * 注意 (ADR-0010 §7):
  *   本 handler は getMessagingGroupByPlatform / resolveSession 等を介して
@@ -218,10 +230,17 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
   // - trigger = 0 → host 側 countDueMessages (WHERE trigger=1) が起床判定で
   //   カウントしないため、本書き込みだけでは agent は起床しない (API
   //   コストゼロ、即時配信の Telegram 通知ともレース無し)
-  // - content には binary attachment を含めない: writeSessionMessage は
-  //   content 内の attachments[].data (base64) を inbox/<id>/<file> に
-  //   展開する仕組みだが、本通知では messages_out 側 outbox にすでに実体が
-  //   書かれているため重複は不要。filename のみを context として残す
+  // - attachments: 添付ファイルの base64 を `attachments[].data` として
+  //   content に同梱する。writeSessionMessage 内の extractAttachmentFiles が
+  //   data を decode して `inbox/<message_id>-in/<filename>` に書き出し、
+  //   content の data フィールドを削除して `localPath` を挿入する。
+  //   結果として agent prompt の <webhook> 内 JSON には
+  //   `attachments: [{ name, localPath }]` が乗り、agent は localPath を
+  //   `Read` ツール等で開いてファイル中身を context に取り込める。
+  //   実体ファイルは messages_out 側 outbox と messages_in 側 inbox の
+  //   2 か所に重複保存されるが、これは Telegram 配信ルート (outbox) と
+  //   agent 認知ルート (inbox) で読まれる場所が分かれている結果として許容する
+  //   (ADR-0011 Trade-offs 参照)
   writeSessionMessage(agent.agent_group_id, session.id, {
     id: `${messageId}-in`,
     kind: 'webhook',
@@ -236,6 +255,11 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
         text: req.message,
         files: filenames,
       },
+      attachments:
+        req.files?.map((f) => ({
+          name: f.filename,
+          data: f.contentBase64,
+        })) ?? [],
     }),
     trigger: 0,
   });
