@@ -1,29 +1,43 @@
 /**
  * Handler: deshi daemon からの skill 実行結果通知を受け付け、
- * messaging_group に紐づく session の messages_out に書き込んで、
- * 既存の delivery polling loop に乗せて channel adapter に届ける。
+ *
+ *   1. messages_out に書き込んで Telegram 等への即時配信を起動する
+ *      (添付ファイル本体は outbox/<message_id>/<filename> に配置)
+ *   2. messages_in にも `kind='webhook', trigger=0` で書き込んで agent の
+ *      context 注入のみ行う (起床はさせない)。添付ファイル本体は
+ *      writeSessionMessage の extractAttachmentFiles 経由で
+ *      inbox/<message_id>-in/<filename> にも展開され、agent が Read ツール等で
+ *      中身を読めるようになる
+ *
+ * の両方を行う (ADR-0011 パターン A)。これによりユーザーは即時に Telegram で
+ * 通知 (本文+添付) を受け取り、後で「さっきの通知のファイル中身は?」のように
+ * 返信した時にも agent が文脈と添付ファイル内容まで保持して応答できる
+ * (会話継続性の維持)。
  *
  * - HTTP path: POST /inbound/deshi/skill-execution-notifications
  * - 認証: dispatch 側で Bearer <DESHI_DAEMON_DEVICE_SECRET> を一括検証
  * - 命名規則: ADR-0010 (kebab-case、direct HTTP receiver 系統)
- * - 詳細仕様: isbtty/deshi#247 (#issuecomment-4475703497)
+ * - 詳細仕様: isbtty/deshi#247 + ADR-0011
  *
  * 設計の要点:
  *
- *   1. delivery を直叩きせず messages_out 経由にする (issue #247 の決定):
- *      agent (container 内 Claude) が「過去に何を言ったか」を覚えているのは
- *      outbound.db の messages_out 経由なので、直接 channel adapter を叩いて
- *      Telegram 投稿しても agent からは「自分が言っていない投稿」になり
- *      会話継続性が壊れる。messages_out に書けば agent も自分の発言として
- *      認識でき、後続の追加質問で文脈を引き継げる。
+ *   1. なぜ messages_out だけでは不十分か (ADR-0011):
+ *      agent (container 内 Claude) は Claude Agent SDK の native session
+ *      continuation で会話を継続する。SDK session には agent が Anthropic API
+ *      を叩いて返ってきた assistant message しか積まれないため、外部から
+ *      messages_out に書いた行は agent の context に乗らない。messages_in に
+ *      `kind='webhook'` で書くと、upstream getPendingMessages が trigger 値に
+ *      関係なく全件取得する性質を利用して、次にユーザーが起床メッセージを
+ *      送った時 prompt に webhook 行も乗る。SDK session に記録されて会話
+ *      継続性が成立する。
  *
  *   2. session 解決ロジックは upstream router.ts と一致させる:
  *      ユーザー依頼時の router 経路で作られる session と「同じ session」に
- *      通知を書き込まないと、依頼 session と通知 session が乖離して
- *      上記 (1) の利点を失う。effectiveSessionMode の判定ロジックは
- *      upstream router.ts:410-413 から **コピー** している (ADR-0002 維持の
- *      ため upstream の関数 export には依存しない)。upstream 側で判定が
- *      変わった場合、本コピーを追随する必要がある。
+ *      書き込まないと、依頼 session と通知 session が乖離して会話継続性が
+ *      壊れる。effectiveSessionMode の判定ロジックは upstream
+ *      router.ts:410-413 から **コピー** している (ADR-0002 維持のため
+ *      upstream の関数 export には依存しない)。upstream 側で判定が変わった
+ *      場合、本コピーを追随する必要がある。
  *
  *   3. adapterSupportsThreads は静的マップで保持 (ADR-0010 §5):
  *      host-tools-server は host 本体と別プロセスで起動するため、
@@ -31,6 +45,13 @@
  *      undefined が返るので、inbound 側に hard-code した SUPPORTS_THREADS を
  *      参照する。新規 channel が upstream に追加された場合は本マップへの
  *      追加が必要 (CONTRIBUTING / PR レビュー観点で吸収)。
+ *
+ *   4. 添付ファイル本体は outbox と inbox の 2 か所に重複保存される
+ *      (ADR-0011 Trade-offs): Telegram 配信ルートは delivery.ts が outbox を
+ *      読み、agent 認知ルートは formatter が messages_in の content から
+ *      localPath を agent に渡して agent が inbox を Read する、という経路の
+ *      違いから発生する。session 寿命の間だけの一時コピーで session sweep /
+ *      clearOutbox で自然に消えるため運用上の負担は限定的。
  *
  * 注意 (ADR-0010 §7):
  *   本 handler は getMessagingGroupByPlatform / resolveSession 等を介して
@@ -47,7 +68,7 @@ import { randomUUID } from 'node:crypto';
 import { getMessagingGroupByPlatform, getMessagingGroupAgents } from '../../db/messaging-groups.js';
 import { isSafeAttachmentName } from '../../attachment-safety.js';
 import { openOutboundDbRw } from '../../db/session-db.js';
-import { resolveSession, outboundDbPath, sessionDir } from '../../session-manager.js';
+import { resolveSession, outboundDbPath, sessionDir, writeSessionMessage } from '../../session-manager.js';
 import { InboundHandlerError } from './errors.js';
 
 /**
@@ -154,14 +175,13 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
   const filenames =
     req.files && req.files.length > 0 ? writeOutboxFiles(agent.agent_group_id, session.id, messageId, req.files) : [];
 
-  // 6. messages_out への INSERT
+  // 6. messages_out への INSERT — Telegram 等への即時配信用 (ADR-0011 パターン A)
   //
   // content schema は container 側の send_file / send_message と同じ
   // `{ text, files: string[] }` JSON を採用 (upstream
   // container/agent-runner/src/mcp-tools/core.ts:173)。
   // kind は 'chat' を採用 — system は内部 action 用 (delivery.ts:255)、
-  // chat は通常配信のデフォルトで agent からも「自分の発言」として
-  // 認識される (会話継続性の維持、issue #247 の決定)。
+  // chat は通常配信のデフォルトで host の delivery polling が pickup する。
   // delivery routing は session の messaging_group の (channel_type,
   // platform_id) と (req.threadId | session.thread_id) で決まる。
   //
@@ -185,6 +205,63 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
       text: req.message,
       files: filenames,
     }),
+  });
+
+  // 7. messages_in への INSERT — agent への context 注入 (ADR-0011 パターン A)
+  //
+  // (6) の messages_out 書き込みは Telegram への即時配信に使うだけで、
+  // agent (container 内 Claude) の context には乗らない。agent は Claude
+  // Agent SDK の native session continuation (`session_state` の
+  // `continuation:claude`) で会話を継続しており、自分の発言履歴の真実の
+  // ソースは Anthropic クラウド SDK session 側にある。SDK session には
+  // agent が API を叩いて返ってきた assistant message しか積まれないため、
+  // 外部から messages_out に書いた行は context に入らない。
+  //
+  // そこで messages_in にも同時に書き込み、次にユーザーが本物のメッセージで
+  // 起床したとき (= countDueMessages が trigger=1 行をカウントしたとき) に
+  // getPendingMessages が trigger 値に関係なく全件取得する性質を利用して、
+  // webhook 行を一緒に prompt に乗せる。これで SDK session に「過去に
+  // こんな通知が来た」という事実が記録され、会話継続性が成立する。
+  //
+  // - kind = 'webhook' → upstream formatter.ts の formatWebhookMessage が
+  //   `<webhook source="..." event="...">payload</webhook>` の XML で整形する。
+  //   ユーザー発言 (`<message>`) とは別タグなので、agent が「ユーザーが
+  //   投稿した」と誤認することはない
+  // - trigger = 0 → host 側 countDueMessages (WHERE trigger=1) が起床判定で
+  //   カウントしないため、本書き込みだけでは agent は起床しない (API
+  //   コストゼロ、即時配信の Telegram 通知ともレース無し)
+  // - attachments: 添付ファイルの base64 を `attachments[].data` として
+  //   content に同梱する。writeSessionMessage 内の extractAttachmentFiles が
+  //   data を decode して `inbox/<message_id>-in/<filename>` に書き出し、
+  //   content の data フィールドを削除して `localPath` を挿入する。
+  //   結果として agent prompt の <webhook> 内 JSON には
+  //   `attachments: [{ name, localPath }]` が乗り、agent は localPath を
+  //   `Read` ツール等で開いてファイル中身を context に取り込める。
+  //   実体ファイルは messages_out 側 outbox と messages_in 側 inbox の
+  //   2 か所に重複保存されるが、これは Telegram 配信ルート (outbox) と
+  //   agent 認知ルート (inbox) で読まれる場所が分かれている結果として許容する
+  //   (ADR-0011 Trade-offs 参照)
+  writeSessionMessage(agent.agent_group_id, session.id, {
+    id: `${messageId}-in`,
+    kind: 'webhook',
+    timestamp: new Date().toISOString(),
+    platformId: mg.platform_id,
+    channelType: mg.channel_type,
+    threadId: req.threadId ?? session.thread_id ?? null,
+    content: JSON.stringify({
+      source: 'deshi',
+      event: 'skill-execution-result',
+      payload: {
+        text: req.message,
+        files: filenames,
+      },
+      attachments:
+        req.files?.map((f) => ({
+          name: f.filename,
+          data: f.contentBase64,
+        })) ?? [],
+    }),
+    trigger: 0,
   });
 
   return {
