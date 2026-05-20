@@ -32,27 +32,44 @@ deshi daemon → nanoclaw への通知 push (`POST /inbound/deshi/skill-executio
 
 | テーブル | 書き込み内容 | 目的 |
 |---|---|---|
-| `messages_out` | `kind='chat'`、content = `{text, files}` (既存 PR #6 の実装と同じ) | Telegram への **即時配信** (host の delivery polling が pickup) |
-| `messages_in` | `kind='webhook'`、`trigger=0`、content = `{source: "deshi", event: "skill-execution-result", payload: {...}}` | agent の **context への注入** (起床はさせない) |
+| `messages_out` | `kind='chat'`、content = `{text, files: string[]}` (filename 配列) | Telegram への **即時配信**。実体ファイルは `outbox/<message_id>/<filename>` に書き、delivery 側 `readOutboxFiles` が読み出して channel adapter に渡す |
+| `messages_in` | `kind='webhook'`、`trigger=0`、content = `{source, event, payload: {text, files: string[]}, attachments: [...]}` | agent の **context への注入** (起床はさせない)。添付ファイル本体も agent が読めるよう、`writeSessionMessage` の `extractAttachmentFiles` 経由で `inbox/<message_id>-in/<filename>` に展開する |
 
 `messages_in` 書き込みは inbound handler 内で `messages_out` の隣で行い、deshi 側からは 1 回の HTTP 呼び出しで両方を実現する。書き込み順序は `messages_out` → `messages_in` を採用する (`messages_in` が先だと、agent 起床条件次第で意図しない race の可能性を残すため。trigger=0 でも防御的に順序を固定する)。
+
+### messages_in の `attachments` フィールドと inbox 展開
+
+`writeSessionMessage` (`src/session-manager.ts`) は content JSON 内に `attachments: [{ name, data: <base64> }]` 構造を含めると、**自動的に**:
+
+1. base64 を decode して `data/v2-sessions/<agent_group>/<session>/inbox/<message_id>/<filename>` に保存
+2. content の各 attachment エントリから `data` を削除し、代わりに `localPath: "inbox/<message_id>/<filename>"` を挿入
+
+→ agent (container) は `/workspace/data/v2-sessions/<agent_group>/<session>/inbox/<message_id>/<filename>` 経由でファイル中身を **`Read` ツール等で実際に読める** ようになる。`payload.files` の filename 一覧は agent 視点の「あったファイル名のメタ情報」として、`attachments[].localPath` はファイル本体への参照として両方を載せる。
+
+ファイル本体は `messages_out` 側の `outbox/<message_id>/<filename>` と `messages_in` 側の `inbox/<message_id>-in/<filename>` の **2 か所に重複保存される**。これは下記 Trade-offs にあるとおり、Telegram 配信ルートと agent 認知ルートで読まれる場所が分かれている結果として許容する。
 
 ### 期待挙動 (会話継続性が成立する流れ)
 
 1. deshi が `POST /inbound/deshi/skill-execution-notifications` を叩く
-2. inbound handler が `messages_out` に書く → host delivery polling が拾って Telegram にプッシュ通知
-3. inbound handler が同時に `messages_in` (`kind='webhook'`, `trigger=0`) にも書く → agent は起床しない (API コストゼロ)
+2. inbound handler が `messages_out` に書く + `outbox/<message_id>/<filename>` にファイル本体を書く → host delivery polling が拾って Telegram にプッシュ通知 (ファイル添付付き)
+3. inbound handler が同時に `messages_in` (`kind='webhook'`, `trigger=0`) にも書く + `writeSessionMessage` 内の `extractAttachmentFiles` が `inbox/<message_id>-in/<filename>` にファイル本体を展開する → agent は起床しない (API コストゼロ)
 4. ユーザーが Telegram で「さっきの通知について教えて」と返信
 5. router が `messages_in` に `kind='chat-sdk'`, `trigger=1` で書く → `countDueMessages` がこれをカウントして agent 起床
 6. agent が `getPendingMessages` で **両方** (`kind='webhook' trigger=0` + `kind='chat-sdk' trigger=1`) を取得
 7. formatter が kind ごとに整形:
    ```xml
    <webhook source="deshi" event="skill-execution-result">
-     {"text": "[通知] 添付ファイル付き通知です", "files": ["..."]}
+     {
+       "text": "[通知] 添付ファイル付き通知です",
+       "files": ["report.pdf"],
+       "attachments": [
+         { "name": "report.pdf", "localPath": "inbox/deshi-inbound-...-in/report.pdf" }
+       ]
+     }
    </webhook>
    <message from="telegram:...">さっきの通知について教えて</message>
    ```
-8. agent が文脈を理解して応答 → SDK が prompt + 応答をクラウド session に記録 → **会話継続性が成立**
+8. agent が `localPath` のファイルを必要に応じて `Read` ツールで読み、内容を理解して応答 → SDK が prompt + 応答をクラウド session に記録 → **会話継続性が成立** (ファイル中身まで理解した応答ができる)
 
 ## `messages_in` の正しい意味 (周辺ナレッジとして重要)
 
@@ -120,11 +137,14 @@ B のメリット (= 通知文面を agent が文脈に合わせて整形でき�
 - ADR-0002 を完全に守れる — upstream 編集ゼロ、deshi コードは `src/deshi/**` 配下のみ
 - `messages_in` の正しい意味 (= ユーザー入力テーブルではなく agent への入力キュー) を ADR として記録するので、将来 inbound handler を追加するエンジニアが同じ誤解で詰まらない
 - `kind='webhook'` という用途別 kind を upstream に依存して使えるので、formatter / SDK との統合は自動で動く (deshi 固有の prompt 整形ロジックを書かなくて良い)
+- `writeSessionMessage` の既存 `extractAttachmentFiles` 機能をそのまま利用するので、agent が中身を読むためのファイル展開ロジックを deshi 側に新規実装しなくて済む。upstream が同関数を進化させれば本実装も自動で恩恵を受ける
 
 ### Trade-offs
 
 - 同じ通知情報を `messages_out` (配信用) と `messages_in` (context 用) の 2 か所に書くことになる。冗長化の代償として、片方だけ書いて他方を忘れる実装ミスのリスクがある。inbound handler 内で必ず両方書く構造にして、テストで両方の存在を assert する
+- **添付ファイル本体も `outbox/<message_id>/<filename>` (配信用) と `inbox/<message_id>-in/<filename>` (agent 読み取り用) の 2 か所に重複保存される**。Telegram 配信は delivery が outbox を読み、agent context は formatter が messages_in の content から localPath を渡して agent が inbox を読む、という経路の違いから生じる。ディスク使用量は session 寿命の間だけの一時コピーで、session sweep / clearOutbox 等で自然に消えるため運用上の負担は限定的
 - `kind='webhook'` は upstream の formatter / poll-loop の仕様に依存する。upstream で webhook kind の扱いが変わった場合は追随が必要 (低頻度想定だが見落としには注意)
+- `attachments` を base64 inline で受けるため、本 endpoint の request body サイズ上限 (`MAX_BODY_BYTES = 20 MiB`、ADR-0010 §4) が実質的に **「通知 1 件あたりの添付ファイル合計上限」と同義**になる。10 MiB 超のファイルを扱いたい場合は別途 multipart/form-data 等への移行を要検討
 - 会話継続性は「次にユーザーがメッセージを送った時」に成立する。**ユーザーがその session に発言しないと webhook 行は SDK session に積まれない**。長期間返信されない場合、container TTL や session sweep で session 自体が消えると webhook 行も失われる (= 永続的な記憶ではない、あくまで「直近のコンテキスト保持」)
 
 ## See also
@@ -138,3 +158,4 @@ B のメリット (= 通知文面を agent が文脈に合わせて整形でき�
 - upstream `container/agent-runner/src/db/messages-in.ts` — `getPendingMessages` の挙動 (trigger に関係なく取得)
 - upstream `container/agent-runner/src/formatter.ts` — `formatWebhookMessage` (kind='webhook' の整形)
 - upstream `src/db/session-db.ts` — `countDueMessages` (trigger=1 のみ起床判定)
+- upstream `src/session-manager.ts` — `writeSessionMessage` + `extractAttachmentFiles` (content 内の `attachments[].data` を `inbox/<message_id>/<filename>` に展開し `localPath` に置き換える機能)
