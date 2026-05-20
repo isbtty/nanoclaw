@@ -46,7 +46,7 @@ import {
   createMessagingGroup,
   createMessagingGroupAgent,
 } from '../../db/index.js';
-import { outboundDbPath, sessionDir } from '../../session-manager.js';
+import { inboundDbPath, outboundDbPath, sessionDir } from '../../session-manager.js';
 import {
   skillExecutionNotificationsHandler,
   type SkillExecutionNotificationResponse,
@@ -71,6 +71,29 @@ function readMessagesOut(agentGroupId: string, sessionId: string): MessagesOutRo
     return db
       .prepare('SELECT id, kind, platform_id, channel_type, thread_id, content FROM messages_out ORDER BY seq ASC')
       .all() as MessagesOutRow[];
+  } finally {
+    db.close();
+  }
+}
+
+interface MessagesInRow {
+  id: string;
+  kind: string;
+  trigger: number;
+  platform_id: string | null;
+  channel_type: string | null;
+  thread_id: string | null;
+  content: string;
+}
+
+function readMessagesIn(agentGroupId: string, sessionId: string): MessagesInRow[] {
+  const db = new Database(inboundDbPath(agentGroupId, sessionId), { readonly: true });
+  try {
+    return db
+      .prepare(
+        'SELECT id, kind, trigger, platform_id, channel_type, thread_id, content FROM messages_in ORDER BY seq ASC',
+      )
+      .all() as MessagesInRow[];
   } finally {
     db.close();
   }
@@ -426,5 +449,123 @@ describe('skillExecutionNotificationsHandler — effectiveSessionMode boundaries
 
     const rows = readMessagesOut(agentId, result.sessionId);
     expect(rows[0]!.thread_id).toBe('thr-42');
+  });
+});
+
+/**
+ * ADR-0011 パターン A: messages_out (即時配信) と messages_in (context 注入)
+ * の両方に書き込まれることを検証する。
+ *
+ * messages_in 側は:
+ *  - kind = 'webhook' (formatter が <webhook> XML タグで整形)
+ *  - trigger = 0 (host countDueMessages がカウントせず、agent を起床させない)
+ *  - content は { source, event, payload: {text, files} } JSON
+ */
+describe('skillExecutionNotificationsHandler — messages_in context injection (ADR-0011)', () => {
+  it('writes a corresponding messages_in row with kind=webhook + trigger=0', async () => {
+    const { agentId } = seedAgentAndChannel();
+
+    const result = (await skillExecutionNotificationsHandler({
+      channel: 'telegram',
+      chatId: 'tg:chat-1',
+      message: '完了しました',
+    })) as SkillExecutionNotificationResponse;
+
+    const inRows = readMessagesIn(agentId, result.sessionId);
+    // messages_in は他のソース (router 等) からも書かれうるので、本 handler 由来の
+    // webhook 行だけを取り出して検証する
+    const webhookRows = inRows.filter((r) => r.kind === 'webhook');
+    expect(webhookRows).toHaveLength(1);
+
+    const row = webhookRows[0]!;
+    expect(row.trigger).toBe(0); // ← 起床させない (ADR-0011 の肝)
+    expect(row.channel_type).toBe('telegram');
+    expect(row.platform_id).toBe('tg:chat-1');
+    expect(row.thread_id).toBeNull();
+
+    // content schema は { source, event, payload: { text, files } }
+    const content = JSON.parse(row.content) as {
+      source: string;
+      event: string;
+      payload: { text: string; files: string[] };
+    };
+    expect(content.source).toBe('deshi');
+    expect(content.event).toBe('skill-execution-result');
+    expect(content.payload.text).toBe('完了しました');
+    expect(content.payload.files).toEqual([]);
+  });
+
+  it('messages_in row id is derived from messageId (suffix `-in`) so both rows can be correlated', async () => {
+    const { agentId } = seedAgentAndChannel();
+
+    const result = (await skillExecutionNotificationsHandler({
+      channel: 'telegram',
+      chatId: 'tg:chat-1',
+      message: 'correlate me',
+    })) as SkillExecutionNotificationResponse;
+
+    const inRows = readMessagesIn(agentId, result.sessionId).filter((r) => r.kind === 'webhook');
+    expect(inRows[0]!.id).toBe(`${result.messageId}-in`);
+  });
+
+  it('writes messages_out AND messages_in atomically for each call (shared session reuse)', async () => {
+    const { agentId } = seedAgentAndChannel();
+
+    await skillExecutionNotificationsHandler({
+      channel: 'telegram',
+      chatId: 'tg:chat-1',
+      message: 'first',
+    });
+    const result2 = (await skillExecutionNotificationsHandler({
+      channel: 'telegram',
+      chatId: 'tg:chat-1',
+      message: 'second',
+    })) as SkillExecutionNotificationResponse;
+
+    const outRows = readMessagesOut(agentId, result2.sessionId);
+    const inWebhookRows = readMessagesIn(agentId, result2.sessionId).filter((r) => r.kind === 'webhook');
+
+    expect(outRows.map((r) => JSON.parse(r.content).text)).toEqual(['first', 'second']);
+    expect(inWebhookRows.map((r) => JSON.parse(r.content).payload.text)).toEqual(['first', 'second']);
+    // すべての messages_in webhook 行が trigger=0 であること (起床しない)
+    expect(inWebhookRows.every((r) => r.trigger === 0)).toBe(true);
+  });
+
+  it('payload.files mirrors the outbox filenames (only names, not binary)', async () => {
+    const { agentId } = seedAgentAndChannel();
+
+    const payload = Buffer.from('binary content');
+    const result = (await skillExecutionNotificationsHandler({
+      channel: 'telegram',
+      chatId: 'tg:chat-1',
+      message: 'ファイル付き',
+      files: [{ filename: 'report.pdf', contentBase64: payload.toString('base64') }],
+    })) as SkillExecutionNotificationResponse;
+
+    const inRows = readMessagesIn(agentId, result.sessionId).filter((r) => r.kind === 'webhook');
+    const content = JSON.parse(inRows[0]!.content) as {
+      payload: { text: string; files: string[] };
+    };
+    expect(content.payload.files).toEqual(['report.pdf']);
+    // messages_in の content には base64 binary を含めない (= 重複保存しない)
+    expect(JSON.stringify(content)).not.toContain(payload.toString('base64'));
+  });
+
+  it('messages_in thread_id mirrors the messages_out routing', async () => {
+    const { agentId } = seedAgentAndChannel({
+      channelType: 'slack',
+      platformId: 'slack:Cx',
+      isGroup: 1,
+      sessionMode: 'shared',
+    });
+    const result = (await skillExecutionNotificationsHandler({
+      channel: 'slack',
+      chatId: 'slack:Cx',
+      threadId: 'thr-77',
+      message: 'reply with thread',
+    })) as SkillExecutionNotificationResponse;
+
+    const inRows = readMessagesIn(agentId, result.sessionId).filter((r) => r.kind === 'webhook');
+    expect(inRows[0]!.thread_id).toBe('thr-77');
   });
 });
