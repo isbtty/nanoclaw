@@ -18,6 +18,7 @@
 import { createHealthHandler } from './health.js';
 import { daemonRunSkillHandler } from './deshi_daemon_run_skill.js';
 import { daemonPollUntilDoneHandler } from './deshi_daemon_poll_until_done.js';
+import { daemonListSkillsHandler } from './deshi_daemon_list_skills.js';
 
 export type HostToolHandler = (body: unknown) => Promise<unknown>;
 
@@ -28,3 +29,9 @@ handlers.health = createHealthHandler(() => Object.keys(handlers));
 
 handlers.deshi_daemon_run_skill = daemonRunSkillHandler as HostToolHandler;
 handlers.deshi_daemon_poll_until_done = daemonPollUntilDoneHandler as HostToolHandler;
+// list と refresh は HTTP 層では同じ handler を共有する (= deshi daemon が毎回
+// disk scan するためキャッシュは持たない)。区別は agent 視点の意味付け (list は
+// 起動時 discover、refresh は実行時 re-fetch) で行う。詳細は
+// `src/deshi/host-tools/deshi_daemon_list_skills.ts` のヘッダコメント参照。
+handlers.deshi_daemon_list_skills = daemonListSkillsHandler as HostToolHandler;
+handlers.deshi_daemon_refresh_skills = daemonListSkillsHandler as HostToolHandler;
