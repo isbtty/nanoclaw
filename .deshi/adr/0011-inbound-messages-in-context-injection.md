@@ -142,7 +142,7 @@ B のメリット (= 通知文面を agent が文脈に合わせて整形でき�
 ### Trade-offs
 
 - 同じ通知情報を `messages_out` (配信用) と `messages_in` (context 用) の 2 か所に書くことになる。冗長化の代償として、片方だけ書いて他方を忘れる実装ミスのリスクがある。inbound handler 内で必ず両方書く構造にして、テストで両方の存在を assert する
-- **添付ファイル本体も `outbox/<message_id>/<filename>` (配信用) と `inbox/<message_id>-in/<filename>` (agent 読み取り用) の 2 か所に重複保存される**。Telegram 配信は delivery が outbox を読み、agent context は formatter が messages_in の content から localPath を渡して agent が inbox を読む、という経路の違いから生じる。ディスク使用量は session 寿命の間だけの一時コピーで、session sweep / clearOutbox 等で自然に消えるため運用上の負担は限定的
+- **添付ファイル本体は一時的に `outbox/<message_id>/<filename>` (配信用) と `inbox/<message_id>-in/<filename>` (agent 読み取り用) の 2 か所に書かれる**。Telegram 配信は delivery が outbox を読み、agent context は formatter が messages_in の content から localPath を渡して agent が inbox を読む、という経路の違いから発生する。ただし実機検証 (isbtty/deshi#248) で確認した通り、**upstream `delivery.ts` の `clearOutbox` が配信完了後に outbox 側を自動削除する**ため、二重保存期間は delivery polling 1 サイクル分 (1s 間隔、数秒程度) に限定される。長期残存するのは inbox 側のみで、これは session sweep で session ごと消えるまでは context source として残る
 - `kind='webhook'` は upstream の formatter / poll-loop の仕様に依存する。upstream で webhook kind の扱いが変わった場合は追随が必要 (低頻度想定だが見落としには注意)
 - `attachments` を base64 inline で受けるため、本 endpoint の request body サイズ上限 (`MAX_BODY_BYTES = 20 MiB`、ADR-0010 §4) が実質的に **「通知 1 件あたりの添付ファイル合計上限」と同義**になる。10 MiB 超のファイルを扱いたい場合は別途 multipart/form-data 等への移行を要検討
 - 会話継続性は「次にユーザーがメッセージを送った時」に成立する。**ユーザーがその session に発言しないと webhook 行は SDK session に積まれない**。長期間返信されない場合、container TTL や session sweep で session 自体が消えると webhook 行も失われる (= 永続的な記憶ではない、あくまで「直近のコンテキスト保持」)
@@ -158,4 +158,5 @@ B のメリット (= 通知文面を agent が文脈に合わせて整形でき�
 - upstream `container/agent-runner/src/db/messages-in.ts` — `getPendingMessages` の挙動 (trigger に関係なく取得)
 - upstream `container/agent-runner/src/formatter.ts` — `formatWebhookMessage` (kind='webhook' の整形)
 - upstream `src/db/session-db.ts` — `countDueMessages` (trigger=1 のみ起床判定)
-- upstream `src/session-manager.ts` — `writeSessionMessage` + `extractAttachmentFiles` (content 内の `attachments[].data` を `inbox/<message_id>/<filename>` に展開し `localPath` に置き換える機能)
+- upstream `src/session-manager.ts` — `writeSessionMessage` + `extractAttachmentFiles` (content 内の `attachments[].data` を `inbox/<message_id>/<filename>` に展開し `localPath` に置き換える機能) / `readOutboxFiles` (delivery 経路で outbox を読む)
+- upstream `src/delivery.ts` — `clearOutbox` (配信完了後に outbox/<message_id>/ ディレクトリを自動削除する。本 ADR の「二重保存は短時間で解消される」根拠)
