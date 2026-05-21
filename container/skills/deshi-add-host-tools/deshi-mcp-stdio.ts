@@ -22,13 +22,27 @@
  *   呼んで再取得できる)。skillName の型は `z.string()` に緩和してあり、本物の
  *   allowlist 検証は deshi daemon 側 (SkillRegistry) に委譲する。
  *
+ * channelContext の自動注入 (isbtty/deshi#267):
+ *   agent に channelContext を fabricate させると、formatter が routing
+ *   フィールドを context から落とすため誤った platformId/threadId が deshi
+ *   daemon に伝わっていた。これを修正するため、agent からは channelContext を
+ *   受け取らず、container 内の `session_routing` table (host が wake 時に
+ *   id=1 1行で書く) から直接 channel / platformId / threadId を読み出して
+ *   inject する。
+ *
+ *   session_routing は権威ある source なので fabricate のリスクが消え、agent
+ *   側の引数 schema も単純化される。`isGroup` は誰も使っていなかったので併せて
+ *   廃止 (nanoclaw inbound 側は messaging_groups.is_group を DB から引く)。
+ *
  * 命名規則と新 tool 追加手順: `.deshi/docs/mcp-tool-naming.md`、`.deshi/adr/0009-mcp-tool-naming.md`。
  *
  * Env:
  *   DESHI_HOST_URL                  (default: http://host.docker.internal:5180)
  *   DESHI_MCP_STARTUP_FETCH_TIMEOUT_MS (default: 5000) — startup skill list fetch 上限
+ *   DESHI_INBOUND_DB_PATH           (default: /workspace/inbound.db) — session_routing 読み出し先
  */
 
+import { Database } from 'bun:sqlite';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -206,18 +220,67 @@ server.tool(
 );
 
 // ─────────────────────────────────────────────────────────────
+// session_routing reader — agent の代わりに channelContext を組み立てる
+//   host は container wake 時に `session_routing` (id=1 単一行) を書き込み、
+//   ここに「この session が紐づく channel / platformId / threadId」が入る。
+//   これを agent に fabricate させると formatter が context から落とすため
+//   誤った値が伝搬していた (isbtty/deshi#267)。本ファイルから直接 SQLite を
+//   読み出すことで権威ある値を保証する。
+//
+//   ADR-0002 (namespace 隔離) を維持するため、agent-runner 内部実装を
+//   import せず本ファイルに小さくコピー。table schema は host 側で固定。
+// ─────────────────────────────────────────────────────────────
+const INBOUND_DB_PATH = process.env.DESHI_INBOUND_DB_PATH || '/workspace/inbound.db';
+
+interface ChannelContext {
+  channel: string;
+  platformId: string;
+  threadId: string;
+}
+
+/**
+ * `session_routing` (id=1) を 1 行読み、`{channel, platformId, threadId}` を返す。
+ *
+ * 接続は毎回 open/close — host との cross-mount visibility (journal_mode=DELETE)
+ * を確実に取るため。テーブル不在 / 行不在 / カラム null は throw する (fabricate
+ * しない方針)。呼び出し側の `daemon_run_skill` ハンドラがその error を agent
+ * に返し、agent は人間に問い合わせる動線に倒す。
+ */
+function readSessionRouting(): ChannelContext {
+  const db = new Database(INBOUND_DB_PATH, { readonly: true });
+  db.exec('PRAGMA busy_timeout = 5000');
+  db.exec('PRAGMA mmap_size = 0');
+  try {
+    const row = db
+      .prepare('SELECT channel_type, platform_id, thread_id FROM session_routing WHERE id = 1')
+      .get() as
+      | { channel_type: string | null; platform_id: string | null; thread_id: string | null }
+      | undefined;
+    if (!row) {
+      throw new Error('session_routing row missing — container wake did not populate routing');
+    }
+    if (!row.channel_type || !row.platform_id || !row.thread_id) {
+      throw new Error(
+        `session_routing has null field(s) — channel_type=${row.channel_type} platform_id=${row.platform_id} thread_id=${row.thread_id}`,
+      );
+    }
+    return {
+      channel: row.channel_type,
+      platformId: row.platform_id,
+      threadId: row.thread_id,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // daemon_run_skill — deshi daemon に skill 実行を依頼 (POST /run)
 //   description に起動時に取得した skill 一覧を埋め込む。
 //   skillName 型は z.string() に緩和し、本物の allowlist 検証は
 //   daemon 側 SkillRegistry に委譲する。
+//   channelContext は agent からは受け取らず、`session_routing` から自動注入。
 // ─────────────────────────────────────────────────────────────
-const channelContextSchema = z.object({
-  channel: z.string().describe('Source platform name, e.g. "telegram" | "line" | "slack"'),
-  platformId: z.string().describe('User identifier on the source platform'),
-  threadId: z.string().describe('Thread / group / channel id ("dm" for direct messages)'),
-  isGroup: z.boolean().describe('True if the source thread is a group/channel, false for DMs'),
-});
-
 const startupSkills = await fetchSkillsAtStartup();
 const runSkillDescription = buildRunSkillDescription(startupSkills);
 
@@ -234,9 +297,25 @@ server.tool(
       .string()
       .optional()
       .describe('Optional arguments string appended after the skill name (e.g. "--full")'),
-    channelContext: channelContextSchema,
   },
-  async (args) => callHostTool('deshi_daemon_run_skill', args),
+  async (args) => {
+    let channelContext: ChannelContext;
+    try {
+      channelContext = readSessionRouting();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to read session_routing for channelContext injection: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    return callHostTool('deshi_daemon_run_skill', { ...args, channelContext });
+  },
 );
 
 // ─────────────────────────────────────────────────────────────
