@@ -8,7 +8,6 @@ const validBody: DaemonRunSkillRequest = {
     channel: 'telegram',
     platformId: 'u-1',
     threadId: 'dm',
-    isGroup: false,
   },
 };
 
