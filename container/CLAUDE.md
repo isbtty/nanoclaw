@@ -46,7 +46,7 @@ skill 実行が必要なユーザー依頼があったら、以下の 2 step で
    - 引数:
      - `skillName`: 上記 5 個のいずれか
      - `args`: 必要に応じてコマンドライン引数文字列 (例: `"--full"`)
-   - **channelContext は渡さない**: container 側で session_routing から自動注入する (isbtty/deshi#267)。agent は channel / platformId / threadId を fabricate しないこと。
+   - **channelContext は渡さない**: container 側で session_routing から自動注入する (https://github.com/isbtty/deshi/issues/267)。agent は channel / platformId / threadId を fabricate しないこと。
    - 戻り値: `{ ok: true, jobId, threadId }`
 2. ユーザーに **即時返答** する: 「`<skillName>` を実行開始しました」程度の短い中間メッセージ。skill 実行は数十秒〜数分かかるため、無音にしない
 3. `mcp__deshi__daemon_poll_until_done` を **1 回だけ** 呼ぶ

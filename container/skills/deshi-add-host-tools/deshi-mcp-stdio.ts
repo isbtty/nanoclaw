@@ -22,7 +22,7 @@
  *   呼んで再取得できる)。skillName の型は `z.string()` に緩和してあり、本物の
  *   allowlist 検証は deshi daemon 側 (SkillRegistry) に委譲する。
  *
- * channelContext の自動注入 (isbtty/deshi#267):
+ * channelContext の自動注入 (https://github.com/isbtty/deshi/issues/267):
  *   agent に channelContext を fabricate させると、formatter が routing
  *   フィールドを context から落とすため誤った platformId/threadId が deshi
  *   daemon に伝わっていた。これを修正するため、agent からは channelContext を
@@ -224,7 +224,7 @@ server.tool(
 //   `data/v2-sessions/<group>/<session>/inbound.db` が container に
 //   bind mount される。この DB の `session_routing` から必ずその session の
 //   channel / platformId / threadId が取れる (host が wake 時に書く)。
-//   agent に fabricate させない (isbtty/deshi#267)。
+//   agent に fabricate させない (https://github.com/isbtty/deshi/issues/267)。
 // ─────────────────────────────────────────────────────────────
 const INBOUND_DB_PATH = process.env.DESHI_INBOUND_DB_PATH || '/workspace/inbound.db';
 
