@@ -15,7 +15,7 @@
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
  * 呼び出しで明示的に mapping する (ADR-0009)。
  *
- * Skill allowlist の動的化 (isbtty/deshi#249, deshi ADR-0002):
+ * Skill allowlist の動的化:
  *   起動時に `daemon_list_skills` を呼んで現時点の expose-to-nanoclaw 付き skill を
  *   取得し、`daemon_run_skill` の description に注入する。起動時 fetch が失敗した
  *   場合は generic description で fallback (agent は `daemon_refresh_skills` を
@@ -209,7 +209,7 @@ server.tool(
 // daemon_run_skill — deshi daemon に skill 実行を依頼 (POST /run)
 //   description に起動時に取得した skill 一覧を埋め込む。
 //   skillName 型は z.string() に緩和し、本物の allowlist 検証は
-//   daemon 側 SkillRegistry に委譲する (isbtty/deshi#249, deshi ADR-0002)。
+//   daemon 側 SkillRegistry に委譲する。
 // ─────────────────────────────────────────────────────────────
 const channelContextSchema = z.object({
   channel: z.string().describe('Source platform name, e.g. "telegram" | "line" | "slack"'),
