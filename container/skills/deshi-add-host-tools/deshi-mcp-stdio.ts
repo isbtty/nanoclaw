@@ -227,6 +227,15 @@ server.tool(
 //   誤った値が伝搬していた (isbtty/deshi#267)。本ファイルから直接 SQLite を
 //   読み出すことで権威ある値を保証する。
 //
+//   per-session 隔離について:
+//     `inbound.db` は session ごとに別ファイルで、container 起動時に
+//     `data/v2-sessions/<group>/<session>/inbound.db` だけが `/workspace`
+//     に bind mount される (src/container-runner.ts 参照)。table 内には
+//     id=1 の単一行しか存在せず、その session 専用の routing が入っている。
+//     したがって本 MCP プロセスが id=1 を読んだ瞬間、自動的に「今この
+//     container が紐づいている session の routing」になる。他 session
+//     とは DB ファイル / mount が物理的に分離されているため、混線しない。
+//
 //   ADR-0002 (namespace 隔離) を維持するため、agent-runner 内部実装を
 //   import せず本ファイルに小さくコピー。table schema は host 側で固定。
 // ─────────────────────────────────────────────────────────────
