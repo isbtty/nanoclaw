@@ -13,8 +13,6 @@
  *
  * 認証: deshi daemon の `GET /skills` は Bearer 必須 (auto-auth は POST /run 限定)。
  * したがって `DESHI_DAEMON_DEVICE_SECRET` 環境変数の Bearer を必須とする。
- *
- * isbtty/deshi#249 (お客様ごとのスキル管理) / deshi ADR-0001 / deshi ADR-0002。
  */
 
 export interface DaemonListSkillsResponse {
