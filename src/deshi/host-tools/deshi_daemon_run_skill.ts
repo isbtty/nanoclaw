@@ -14,8 +14,7 @@
 interface ChannelContext {
   channel: string;
   platformId: string;
-  threadId: string;
-  isGroup: boolean;
+  threadId?: string;
 }
 
 export interface DaemonRunSkillRequest {

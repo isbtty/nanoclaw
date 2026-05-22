@@ -8,7 +8,6 @@ const validBody: DaemonRunSkillRequest = {
     channel: 'telegram',
     platformId: 'u-1',
     threadId: 'dm',
-    isGroup: false,
   },
 };
 
@@ -122,5 +121,24 @@ describe('daemonRunSkillHandler', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await expect(daemonRunSkillHandler(validBody)).rejects.toThrow('ECONNREFUSED');
+  });
+
+  it('threadId 欠落の channelContext (DM 等の thread を持たない channel) も受け付け、そのまま deshi へ渡す', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ jobId: 'JOB3', threadId: 'T3' }),
+      text: async () => '',
+    } as unknown as Response);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const bodyWithoutThreadId: DaemonRunSkillRequest = {
+      skillName: 'sync',
+      channelContext: { channel: 'telegram', platformId: 'telegram:8692810494' },
+    };
+    await daemonRunSkillHandler(bodyWithoutThreadId);
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(init.body as string) as { channelContext: { threadId?: string } };
+    expect(body.channelContext.threadId).toBeUndefined();
   });
 });
