@@ -14,7 +14,7 @@
 interface ChannelContext {
   channel: string;
   platformId: string;
-  threadId: string;
+  threadId?: string;
 }
 
 export interface DaemonRunSkillRequest {

@@ -231,16 +231,17 @@ const INBOUND_DB_PATH = process.env.DESHI_INBOUND_DB_PATH || '/workspace/inbound
 interface ChannelContext {
   channel: string;
   platformId: string;
-  threadId: string;
+  threadId?: string;
 }
 
 /**
- * `session_routing` (id=1) を 1 行読み、`{channel, platformId, threadId}` を返す。
+ * `session_routing` (id=1) を 1 行読み、`{channel, platformId, threadId?}` を返す。
  *
  * 接続は毎回 open/close — host との cross-mount visibility (journal_mode=DELETE)
- * を確実に取るため。テーブル不在 / 行不在 / カラム null は throw する (fabricate
- * しない方針)。呼び出し側の `daemon_run_skill` ハンドラがその error を agent
- * に返し、agent は人間に問い合わせる動線に倒す。
+ * を確実に取るため。channel_type / platform_id が欠落していれば throw (fabricate
+ * しない方針)。thread_id は thread を持たない channel (Telegram DM 等) では
+ * 空文字 / null で書かれるのが正常系なので、その場合は threadId キー自体を
+ * 付けずに返す (deshi #258 で threadId? optional 化済み)。
  */
 function readSessionRouting(): ChannelContext {
   const db = new Database(INBOUND_DB_PATH, { readonly: true });
@@ -255,16 +256,17 @@ function readSessionRouting(): ChannelContext {
     if (!row) {
       throw new Error('session_routing row missing — container wake did not populate routing');
     }
-    if (!row.channel_type || !row.platform_id || !row.thread_id) {
+    if (!row.channel_type || !row.platform_id) {
       throw new Error(
-        `session_routing has null field(s) — channel_type=${row.channel_type} platform_id=${row.platform_id} thread_id=${row.thread_id}`,
+        `session_routing has null field(s) — channel_type=${row.channel_type} platform_id=${row.platform_id}`,
       );
     }
-    return {
+    const result: ChannelContext = {
       channel: row.channel_type,
       platformId: row.platform_id,
-      threadId: row.thread_id,
     };
+    if (row.thread_id) result.threadId = row.thread_id;
+    return result;
   } finally {
     db.close();
   }
