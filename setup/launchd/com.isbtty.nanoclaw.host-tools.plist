@@ -42,6 +42,15 @@
 
     <key>EnvironmentVariables</key>
     <dict>
+        <!--
+          launchd does not inherit a login shell's PATH. pnpm の shebang は
+          `#!/usr/bin/env node` なので、ここで node を見つけられる PATH を渡さないと
+          exit 127 (`env: node: No such file or directory`) で起動失敗する。
+          Homebrew (Apple Silicon / Intel) と /usr/local を両方カバーしておく。
+        -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+
         <key>DESHI_HOST_TOOLS_PORT</key>
         <string>5180</string>
 
