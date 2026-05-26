@@ -11,6 +11,7 @@
  *   - daemon_list_skills      : 起動時の skill 一覧 discovery
  *   - daemon_refresh_skills   : 実行時の skill 一覧 re-fetch
  *   - daemon_search_files     : deshi-wiki/deshi-raw の hybrid search (qmd 経由)
+ *   - daemon_gog              : Google Calendar/Docs/Drive/Gmail を gog CLI 経由で操作
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
@@ -359,6 +360,55 @@ server.tool(
       .describe('Max wait time in milliseconds (default 1800000 = 30 minutes)'),
   },
   async (args) => callHostTool('deshi_daemon_poll_until_done', args),
+);
+
+// ─────────────────────────────────────────────────────────────
+// daemon_gog
+//   Run a whitelisted gog CLI subcommand (Calendar / Docs / Drive / Gmail-read
+//   / auth-status) via deshi daemon POST /gog. Direct primitive — no skill
+//   spawn, no secondary Claude session. Use when the user wants to:
+//     - check / create / update calendar events
+//     - create / write Google Docs
+//     - search / share / list Drive files
+//     - read Gmail (list / search / get)
+//   Destructive operations (delete / send / login / logout) are blocked
+//   server-side and will return an error if requested — direct the user to
+//   the CLI instead.
+// ─────────────────────────────────────────────────────────────
+server.tool(
+  'daemon_gog',
+  [
+    'Run a `gog` CLI subcommand on the host to operate Google services. Subcommand path is dot-separated (e.g. "calendar.events", "docs.create", "gmail.messages.list"). Pass any additional CLI args as a string array — each element is one argv item.',
+    '',
+    'Allowed subcommands (server-enforced whitelist):',
+    '- calendar.events / calendar.event / calendar.calendars / calendar.acl (read)',
+    '- calendar.create / calendar.update (non-destructive write)',
+    '- docs.create / docs.write / docs.info / docs.export',
+    '- drive.ls / drive.search / drive.share / drive.download / drive.upload',
+    '- gmail.messages.list / gmail.messages.get / gmail.messages.search / gmail.labels.list / gmail.threads.list / gmail.threads.get',
+    '- auth.status / auth.list',
+    '',
+    'Blocked (will return 403): any delete / remove, gmail.send, auth.add, auth.remove. The daemon also injects `-a <account>` so caller-supplied `-a` / `--account` / `--client` / `--enable-commands` args are rejected.',
+    '',
+    'Returns `{ok, subcommand, stdout, stderr, exitCode}`. The agent should choose the appropriate `--plain` / `--json` flag in `args` to control output format.',
+  ].join('\n'),
+  {
+    subcommand: z
+      .string()
+      .describe('Dot-separated subcommand path (e.g. "calendar.events")'),
+    args: z
+      .array(z.string())
+      .optional()
+      .describe('Additional CLI args, one element per argv item (e.g. ["--days", "1", "--plain"])'),
+    timeout: z
+      .number()
+      .int()
+      .min(1000)
+      .max(5 * 60_000)
+      .optional()
+      .describe('Subprocess timeout in ms (default 30000, max 300000)'),
+  },
+  async (args) => callHostTool('deshi_daemon_gog', args),
 );
 
 const transport = new StdioServerTransport();
