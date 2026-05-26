@@ -21,7 +21,7 @@ describe('daemonSearchFilesHandler', () => {
   });
 
   const validPayload = {
-    query: 'DOU',
+    query: 'example',
     results: [
       { path: 'projects/foo.md', name: 'foo.md', score: 0.7, snippet: '...' },
       { path: 'meetings/bar.md', name: 'bar.md', score: 0.6, snippet: 'bar' },
@@ -43,18 +43,18 @@ describe('daemonSearchFilesHandler', () => {
   it('GET /files/search を Bearer 付きで叩き、ok 形式で結果を返す', async () => {
     const fetchMock = mockOk(validPayload);
 
-    const result = await daemonSearchFilesHandler({ query: 'DOU' });
+    const result = await daemonSearchFilesHandler({ query: 'example' });
 
     expect(result).toEqual({
       ok: true,
-      query: 'DOU',
+      query: 'example',
       results: validPayload.results,
       totalCount: 2,
       indexedAt: '2026-05-26T04:00:00.000Z',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://localhost:3100/files/search?q=DOU');
+    expect(url).toBe('http://localhost:3100/files/search?q=example');
     const headers = init.headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer test-secret:nanoclaw');
   });
@@ -62,16 +62,16 @@ describe('daemonSearchFilesHandler', () => {
   it('limit を指定すると query string に乗る', async () => {
     const fetchMock = mockOk(validPayload);
 
-    await daemonSearchFilesHandler({ query: 'DOU', limit: 5 });
+    await daemonSearchFilesHandler({ query: 'example', limit: 5 });
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://localhost:3100/files/search?q=DOU&limit=5');
+    expect(url).toBe('http://localhost:3100/files/search?q=example&limit=5');
   });
 
   it('limit 未指定なら query string にも乗せない (daemon default に従う)', async () => {
     const fetchMock = mockOk(validPayload);
 
-    await daemonSearchFilesHandler({ query: 'DOU' });
+    await daemonSearchFilesHandler({ query: 'example' });
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).not.toContain('limit=');
