@@ -18,6 +18,12 @@ Use the `mcp__nanoclaw__send_message` tool to send a message while you're still 
 
 Use `mcp__nanoclaw__send_file({ path, text?, filename?, to? })` to deliver a file from your workspace. `path` is absolute or relative to `/workspace/agent/`; `filename` overrides the display name shown in chat (defaults to the file's basename); `text` is an optional accompanying message. Use this for artifacts you produce (charts, PDFs, generated images, reports) rather than dumping contents into chat.
 
+#### Auto-attach in `send_message`
+
+When you mention a deliverable file in a `send_message` body — e.g. backtick-quoted ``output/report.pdf`` or a bare `/workspace/agent/chart.png` — that file is automatically attached to the message if it exists under your workspace and has a deliverable extension (`.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.yaml`, `.yml`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.html`, `.md`, `.txt`). Source-code extensions (`.ts`, `.py`, `.go`, ...) are deliberately excluded so referencing code in chat does not trigger an upload.
+
+This means you can reply naturally — "Done — `output/report.pdf` and `chart.png` are ready" — and the files ride along. Use `send_file` explicitly when you need to override the display filename, attach a file under a different name, or send a file from outside your workspace.
+
 ### Reacting to messages (`add_reaction`)
 
 Use `mcp__nanoclaw__add_reaction({ messageId, emoji })` to react to a specific inbound message by its `#N` id — pass `messageId` as an integer (e.g. `22`, not `"22"`). Good for lightweight acknowledgment (`eyes` = seen, `white_check_mark` = done) when a full reply would be noise. `emoji` is the shortcode name (e.g. `thumbs_up`, `heart`), not the raw character.
