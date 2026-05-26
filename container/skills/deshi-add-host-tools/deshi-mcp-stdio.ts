@@ -10,6 +10,7 @@
  *   - daemon_poll_until_done  : deshi daemon の GET /jobs/:jobId を long polling
  *   - daemon_list_skills      : 起動時の skill 一覧 discovery
  *   - daemon_refresh_skills   : 実行時の skill 一覧 re-fetch
+ *   - daemon_search_files     : deshi-wiki/deshi-raw の hybrid search (qmd 経由)
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
@@ -217,6 +218,30 @@ server.tool(
   'Re-fetch the list of deshi skills exposed to nanoclaw. Use this when the user requests a skill that was not in the startup list — a customer fork may have added new skills after the session started. Returns the same shape as `daemon_list_skills`.',
   {},
   async () => callHostTool('deshi_daemon_refresh_skills', {}),
+);
+
+// ─────────────────────────────────────────────────────────────
+// daemon_search_files
+//   Hybrid (semantic + lexical) search over deshi-wiki / deshi-raw via the
+//   `qmd` CLI on the host. Direct primitive — does NOT spawn a skill, so it
+//   is cheap enough for the agent to call multiple times in one turn while
+//   triangulating where information lives ("did we already write about X?",
+//   "find any past meetings with Y").
+// ─────────────────────────────────────────────────────────────
+server.tool(
+  'daemon_search_files',
+  'Search deshi-wiki / deshi-raw using hybrid (semantic + lexical) ranking. Returns `{schemaVersion?, query, results: [{path, name, score, snippet}], totalCount, indexedAt}`. Use this for ad-hoc lookups across the user\'s knowledge base — cheaper than calling a skill since it goes directly to the daemon. Examples: find prior writeups by topic, locate the meeting note with someone, see whether a concept already has a wiki entry.',
+  {
+    query: z.string().describe('Search query (Japanese OK, non-empty)'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Maximum results to return (default 20, range 1-100)'),
+  },
+  async (args) => callHostTool('deshi_daemon_search_files', args),
 );
 
 // ─────────────────────────────────────────────────────────────
