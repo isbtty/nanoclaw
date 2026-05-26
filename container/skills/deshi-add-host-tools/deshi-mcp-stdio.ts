@@ -12,6 +12,7 @@
  *   - daemon_refresh_skills   : 実行時の skill 一覧 re-fetch
  *   - daemon_search_files     : deshi-wiki/deshi-raw の hybrid search (qmd 経由)
  *   - daemon_gog              : Google Calendar/Docs/Drive/Gmail を gog CLI 経由で操作
+ *   - daemon_send_file_to_chat: deshi-raw/deshi-wiki 配下のファイルを現在のチャットに送る
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
@@ -409,6 +410,59 @@ server.tool(
       .describe('Subprocess timeout in ms (default 30000, max 300000)'),
   },
   async (args) => callHostTool('deshi_daemon_gog', args),
+);
+
+// ─────────────────────────────────────────────────────────────
+// daemon_send_file_to_chat
+//   Deliver a file from the deshi host (deshi-raw or deshi-wiki) to the
+//   CURRENT chat the agent is talking on. Use this when `daemon_search_files`
+//   returned a useful artifact (`outputs/.../*.html`, a meeting note PDF, …)
+//   and the user wants it forwarded. The host fs is NOT mounted inside this
+//   container, so `send_file` cannot reach those paths directly — this tool
+//   bridges that gap.
+//
+//   channelContext is auto-injected from `session_routing` (same pattern as
+//   daemon_run_skill) so the agent does not pass it. The path is the same
+//   value `daemon_search_files` returned in `results[].path` (relative to
+//   deshi dataDir, e.g. "outputs/2026-05-26-foo/bar.html").
+// ─────────────────────────────────────────────────────────────
+server.tool(
+  'daemon_send_file_to_chat',
+  [
+    'Deliver a file living on the deshi host (under deshi-raw or deshi-wiki) to the current chat as an attachment. Use this after `daemon_search_files` finds an HTML / PDF / image artifact the user wants forwarded — the host fs is NOT mounted in this container, so `send_file` cannot reach those paths directly.',
+    '',
+    'The `path` is the same form returned by `daemon_search_files` (`results[].path`, relative to deshi dataDir, e.g. `outputs/2026-05-26-morning-weather/morning-weather.html`). Optional `text` is sent as a 1-line caption alongside the file. Optional `filename` overrides the display name shown in chat (default: basename of path).',
+    '',
+    'Returns `{ok, sessionId, messageId, filename}`.',
+  ].join('\n'),
+  {
+    path: z
+      .string()
+      .describe('Relative path under deshi-raw or deshi-wiki (e.g. "outputs/2026-05-26-foo/bar.html")'),
+    text: z.string().optional().describe('Optional caption sent alongside the file (default: empty)'),
+    filename: z
+      .string()
+      .optional()
+      .describe('Optional display filename override (default: basename of path)'),
+  },
+  async (args) => {
+    let channelContext: ChannelContext;
+    try {
+      channelContext = readSessionRouting();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to read session_routing for channelContext injection: ${message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    return callHostTool('deshi_daemon_send_file_to_chat', { ...args, channelContext });
+  },
 );
 
 const transport = new StdioServerTransport();

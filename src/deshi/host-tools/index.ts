@@ -21,6 +21,7 @@ import { daemonPollUntilDoneHandler } from './deshi_daemon_poll_until_done.js';
 import { daemonListSkillsHandler } from './deshi_daemon_list_skills.js';
 import { daemonSearchFilesHandler } from './deshi_daemon_search_files.js';
 import { daemonGogHandler } from './deshi_daemon_gog.js';
+import { daemonSendFileToChatHandler } from './deshi_daemon_send_file_to_chat.js';
 
 export type HostToolHandler = (body: unknown) => Promise<unknown>;
 
@@ -46,3 +47,8 @@ handlers.deshi_daemon_search_files = daemonSearchFilesHandler as HostToolHandler
 // injection 等の安全策は deshi daemon 側 TS で deterministic に enforce
 // するので、ここでは validation を最小限にして daemon のエラーを透過する。
 handlers.deshi_daemon_gog = daemonGogHandler as HostToolHandler;
+// agent がホスト上の deshi-raw / deshi-wiki 配下のファイル (qmd 検索で見つけた
+// outputs/*.html 等) を現在の Telegram chat に届けるための経路。
+// 内部実装は deshi `/files/content` でファイル本体を取って既存の
+// skill-execution-notifications handler を in-process で再利用する。
+handlers.deshi_daemon_send_file_to_chat = daemonSendFileToChatHandler as HostToolHandler;
