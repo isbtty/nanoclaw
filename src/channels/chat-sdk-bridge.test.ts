@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { Adapter, AdapterPostableMessage, RawMessage } from 'chat';
 
-import { createChatSdkBridge, splitForLimit } from './chat-sdk-bridge.js';
+import {
+  createChatSdkBridge,
+  isMarkdownEntityParseError,
+  postWithMarkdownFallback,
+  splitForLimit,
+} from './chat-sdk-bridge.js';
 
 function stubAdapter(partial: Partial<Adapter>): Adapter {
   return { name: 'stub', ...partial } as unknown as Adapter;
@@ -203,5 +208,123 @@ describe('createChatSdkBridge.deliver — display cards (send_card)', () => {
     expect(calls).toHaveLength(1);
     const msg = calls[0].message as { markdown?: string };
     expect(msg.markdown).toBe('plain hello');
+  });
+});
+
+describe('isMarkdownEntityParseError', () => {
+  it('matches Telegram "can\'t parse entities" with byte offset', () => {
+    expect(
+      isMarkdownEntityParseError(
+        new Error("Bad Request: can't parse entities: Can't find end of the entity starting at byte offset 474"),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches the "can\'t find end of the entity" variant', () => {
+    expect(isMarkdownEntityParseError({ message: "Can't find end of the entity starting at byte offset 100" })).toBe(
+      true,
+    );
+  });
+
+  it('matches the "can\'t find end tag" variant (HTML parse_mode)', () => {
+    expect(isMarkdownEntityParseError({ message: "Bad Request: can't find end tag corresponding to start tag" })).toBe(
+      true,
+    );
+  });
+
+  it('case-insensitive', () => {
+    expect(isMarkdownEntityParseError({ message: "Can't Parse Entities at byte offset 1" })).toBe(true);
+  });
+
+  it('returns false for unrelated errors', () => {
+    expect(isMarkdownEntityParseError(new Error('ECONNREFUSED'))).toBe(false);
+    expect(isMarkdownEntityParseError(new Error('Bad Request: chat not found'))).toBe(false);
+    expect(isMarkdownEntityParseError(new Error('429 Too Many Requests'))).toBe(false);
+  });
+
+  it('returns false for non-Error inputs', () => {
+    expect(isMarkdownEntityParseError(null)).toBe(false);
+    expect(isMarkdownEntityParseError(undefined)).toBe(false);
+    expect(isMarkdownEntityParseError("can't parse entities")).toBe(false);
+    expect(isMarkdownEntityParseError(42)).toBe(false);
+  });
+});
+
+describe('postWithMarkdownFallback', () => {
+  it('posts markdown on the happy path with no retry', async () => {
+    const calls: Array<{ thread: string; message: AdapterPostableMessage }> = [];
+    const adapter = stubAdapter({
+      postMessage: async (thread: string, message: AdapterPostableMessage): Promise<RawMessage<unknown>> => {
+        calls.push({ thread, message });
+        return { id: 'm-1', threadId: thread, raw: {} };
+      },
+    });
+    const result = await postWithMarkdownFallback(adapter, 'tg:42', '**hi**', undefined);
+    expect(result?.id).toBe('m-1');
+    expect(calls).toHaveLength(1);
+    expect((calls[0].message as { markdown?: string }).markdown).toBe('**hi**');
+  });
+
+  it('retries as plain text on entity-parse error', async () => {
+    const calls: Array<AdapterPostableMessage> = [];
+    let attempt = 0;
+    const adapter = stubAdapter({
+      postMessage: async (_thread: string, message: AdapterPostableMessage): Promise<RawMessage<unknown>> => {
+        calls.push(message);
+        attempt++;
+        if (attempt === 1) {
+          throw new Error(
+            "Bad Request: can't parse entities: Can't find end of the entity starting at byte offset 474",
+          );
+        }
+        return { id: `m-${attempt}`, threadId: 'tg:42', raw: {} };
+      },
+    });
+    const result = await postWithMarkdownFallback(
+      adapter,
+      'tg:42',
+      'see https://example.com/path_with_underscore_again/edit',
+      undefined,
+    );
+    expect(result?.id).toBe('m-2');
+    expect(calls).toHaveLength(2);
+    expect((calls[0] as { markdown?: string }).markdown).toBeDefined();
+    expect((calls[0] as { raw?: string }).raw).toBeUndefined();
+    // Retry uses `raw` (PostableRaw), which the Telegram adapter sends
+    // without parse_mode (resolveParseMode keys on `markdown`).
+    expect((calls[1] as { markdown?: string }).markdown).toBeUndefined();
+    expect((calls[1] as { raw?: string }).raw).toBe('see https://example.com/path_with_underscore_again/edit');
+  });
+
+  it('rethrows non-entity errors without retrying', async () => {
+    let attempt = 0;
+    const adapter = stubAdapter({
+      postMessage: async (): Promise<RawMessage<unknown>> => {
+        attempt++;
+        throw new Error('ECONNREFUSED');
+      },
+    });
+    await expect(postWithMarkdownFallback(adapter, 'tg:42', 'hi', undefined)).rejects.toThrow(/ECONNREFUSED/);
+    expect(attempt).toBe(1);
+  });
+
+  it('carries files through on both attempts (so attachments survive an entity-parse retry)', async () => {
+    const calls: Array<AdapterPostableMessage> = [];
+    let attempt = 0;
+    const adapter = stubAdapter({
+      postMessage: async (_thread: string, message: AdapterPostableMessage): Promise<RawMessage<unknown>> => {
+        calls.push(message);
+        attempt++;
+        if (attempt === 1) {
+          throw new Error("can't parse entities");
+        }
+        return { id: 'm-retry', threadId: 'tg:42', raw: {} };
+      },
+    });
+    const files = [{ data: Buffer.from('PDF'), filename: 'report.pdf' }];
+    await postWithMarkdownFallback(adapter, 'tg:42', 'see `report.pdf`', files);
+    expect(calls).toHaveLength(2);
+    expect((calls[0] as { files?: unknown[] }).files).toEqual(files);
+    expect((calls[1] as { files?: unknown[] }).files).toEqual(files);
   });
 });

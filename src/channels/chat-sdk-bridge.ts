@@ -45,6 +45,77 @@ export interface ReplyContext {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ReplyContextExtractor = (raw: Record<string, any>) => ReplyContext | null;
 
+/**
+ * True when an adapter error indicates the platform rejected the message
+ * because it could not parse the markdown entities (= `**bold**` /
+ * `_underscore_` / link syntax tripped its parser). Currently the only
+ * platform that returns this signature is Telegram with `parse_mode=Markdown`,
+ * which trips when text contains URLs with `_` (Drive / Notion / etc.), odd
+ * delimiter counts left over after sanitization, or other CommonMark constructs
+ * that Telegram's legacy parser doesn't understand.
+ *
+ * Detected message variants from the wild:
+ *   - "Bad Request: can't parse entities: Can't find end of the entity..."
+ *   - "Bad Request: can't parse entities at byte offset N"
+ *   - "can't find end tag corresponding to start tag"
+ *
+ * Match is intentionally permissive: we'd rather over-detect and retry as
+ * plain text than miss a variant and drop a user-facing reply on the floor.
+ */
+export function isMarkdownEntityParseError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const message = String((err as { message?: unknown }).message ?? '');
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("can't parse entities") ||
+    lower.includes("can't find end of the entity") ||
+    lower.includes("can't find end tag")
+  );
+}
+
+/**
+ * Post a message via the adapter; if the platform rejects it with a markdown
+ * entity-parse error, retry once as plain text (no parse_mode).
+ *
+ * Why two calls instead of one plain-text call: most replies are
+ * markdown-clean and we want bold / italic / inline code to render. Only the
+ * pathological cases (URLs with `_`, unbalanced delimiters that survived
+ * sanitization, …) fall back. The plain-text retry preserves the message
+ * content verbatim — `**bold**` shows up as literal `**bold**` in chat, which
+ * is ugly but vastly better than silently dropping the reply after three
+ * delivery retries (the historical failure mode, see isbtty/deshi#239 where
+ * the same pattern was added on the deshi side).
+ *
+ * Files (when present) ride on the retry as well so attachments survive even
+ * when only the caption tripped the parser.
+ */
+export async function postWithMarkdownFallback(
+  adapter: Adapter,
+  threadId: string,
+  text: string,
+  files: Array<{ data: Buffer; filename: string }> | undefined,
+): Promise<{ id: string } | undefined> {
+  const withFiles = files && files.length > 0 ? { files } : {};
+  try {
+    return (await adapter.postMessage(threadId, { markdown: text, ...withFiles })) ?? undefined;
+  } catch (err) {
+    if (!isMarkdownEntityParseError(err)) throw err;
+    log.warn('Telegram-style markdown entity parse failed; retrying as plain text', {
+      adapter: adapter.name,
+      threadId,
+      err: String((err as { message?: unknown }).message ?? err),
+    });
+    // Send as PostableRaw (`{raw: ...}`) to bypass parse_mode. The Telegram
+    // adapter's resolveParseMode keys on the `markdown` field, so a `raw`
+    // payload reaches Telegram without parse_mode set — the literal text is
+    // delivered without entity interpretation. Bold / italic / inline code
+    // show up as their source syntax (`**bold**` not **bold**) which is
+    // less pretty but a strict improvement over the previous behavior of
+    // dropping the message entirely after three retries.
+    return (await adapter.postMessage(threadId, { raw: text, ...withFiles })) ?? undefined;
+  }
+}
+
 export interface ChatSdkBridgeConfig {
   adapter: Adapter;
   concurrency?: ConcurrencyStrategy;
@@ -488,10 +559,13 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
           const attachFiles = i === 0 && fileUploads && fileUploads.length > 0;
-          const result = await adapter.postMessage(
-            tid,
-            attachFiles ? { markdown: chunk, files: fileUploads } : { markdown: chunk },
-          );
+          // postWithMarkdownFallback: try markdown, fall back to plain text if
+          // the platform rejects markdown entity parsing. Prevents permanent
+          // delivery failure when an agent reply contains a Drive / Notion
+          // URL with `_` in the path, unbalanced delimiters that survived the
+          // sanitizer, etc. (isbtty/deshi#239 had the same fix on the deshi
+          // side; this is the nanoclaw-side equivalent.)
+          const result = await postWithMarkdownFallback(adapter, tid, chunk, attachFiles ? fileUploads : undefined);
           if (i === 0) firstId = result?.id;
         }
         return firstId;
