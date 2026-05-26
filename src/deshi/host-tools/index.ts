@@ -20,6 +20,7 @@ import { daemonRunSkillHandler } from './deshi_daemon_run_skill.js';
 import { daemonPollUntilDoneHandler } from './deshi_daemon_poll_until_done.js';
 import { daemonListSkillsHandler } from './deshi_daemon_list_skills.js';
 import { daemonSearchFilesHandler } from './deshi_daemon_search_files.js';
+import { daemonGogHandler } from './deshi_daemon_gog.js';
 
 export type HostToolHandler = (body: unknown) => Promise<unknown>;
 
@@ -40,3 +41,8 @@ handlers.deshi_daemon_refresh_skills = daemonListSkillsHandler as HostToolHandle
 // skill spawn を介さずに `GET /files/search` を直接 wrap するので、
 // 1 ターンで複数回叩く探索用途に最適 (ADR-0009)。
 handlers.deshi_daemon_search_files = daemonSearchFilesHandler as HostToolHandler;
+// Google Calendar / Docs / Drive / Gmail (read) を gog CLI 経由で操作する。
+// daemon 側 POST /gog の薄い wrapper。subcommand whitelist + `-a` 強制
+// injection 等の安全策は deshi daemon 側 TS で deterministic に enforce
+// するので、ここでは validation を最小限にして daemon のエラーを透過する。
+handlers.deshi_daemon_gog = daemonGogHandler as HostToolHandler;
