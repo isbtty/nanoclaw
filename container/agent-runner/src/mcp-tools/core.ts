@@ -13,8 +13,20 @@ import { getCurrentInReplyTo } from '../current-batch.js';
 import { findByName, getAllDestinations } from '../destinations.js';
 import { getMessageIdBySeq, getRoutingBySeq, writeMessageOut } from '../db/messages-out.js';
 import { getSessionRouting } from '../db/session-routing.js';
+import { attachToOutbox, extractDeliverablePaths } from './auto-attach.js';
 import { registerTools } from './server.js';
 import type { McpToolDefinition } from './types.js';
+
+/**
+ * Workspace layout the running container expects. Centralized here so the
+ * production constants stay in one place and auto-attach.ts can remain a pure,
+ * test-friendly module that takes roots as parameters.
+ */
+const AUTO_ATTACH_ROOTS = {
+  workspaceRoot: '/workspace',
+  agentRoot: '/workspace/agent',
+  outboxRoot: '/workspace/outbox',
+} as const;
 
 function log(msg: string): void {
   console.error(`[mcp-tools] ${msg}`);
@@ -116,6 +128,25 @@ export const sendMessage: McpToolDefinition = {
     if ('error' in routing) return err(routing.error);
 
     const id = generateId();
+
+    // Auto-attach: scan the message for deliverable-looking path references
+    // (PDFs, images, docs, ...) under the workspace and copy them into this
+    // message's outbox so they ride along as attachments. Best-effort —
+    // failures inside the helper are silently swallowed so a missing file or
+    // sandbox issue can't take down `send_message`. See auto-attach.ts for
+    // the filter rules; in particular, source-code extensions are excluded so
+    // mentioning `src/foo.ts` in chat does not auto-upload it.
+    let attachedFilenames: string[] = [];
+    try {
+      const sourcePaths = extractDeliverablePaths(text, AUTO_ATTACH_ROOTS);
+      attachedFilenames = attachToOutbox(id, sourcePaths, AUTO_ATTACH_ROOTS.outboxRoot);
+    } catch (e) {
+      log(`send_message: auto-attach skipped (${(e as Error).message})`);
+    }
+
+    const content: Record<string, unknown> = { text };
+    if (attachedFilenames.length > 0) content.files = attachedFilenames;
+
     const seq = writeMessageOut({
       id,
       in_reply_to: getCurrentInReplyTo(),
@@ -123,11 +154,13 @@ export const sendMessage: McpToolDefinition = {
       platform_id: routing.platform_id,
       channel_type: routing.channel_type,
       thread_id: routing.thread_id,
-      content: JSON.stringify({ text }),
+      content: JSON.stringify(content),
     });
 
-    log(`send_message: #${seq} → ${routing.resolvedName}`);
-    return ok(`Message sent to ${routing.resolvedName} (id: ${seq})`);
+    const attachSuffix =
+      attachedFilenames.length > 0 ? ` (auto-attached: ${attachedFilenames.join(', ')})` : '';
+    log(`send_message: #${seq} → ${routing.resolvedName}${attachSuffix}`);
+    return ok(`Message sent to ${routing.resolvedName} (id: ${seq})${attachSuffix}`);
   },
 };
 
