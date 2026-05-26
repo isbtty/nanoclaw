@@ -19,6 +19,7 @@ import { createHealthHandler } from './health.js';
 import { daemonRunSkillHandler } from './deshi_daemon_run_skill.js';
 import { daemonPollUntilDoneHandler } from './deshi_daemon_poll_until_done.js';
 import { daemonListSkillsHandler } from './deshi_daemon_list_skills.js';
+import { daemonSearchFilesHandler } from './deshi_daemon_search_files.js';
 
 export type HostToolHandler = (body: unknown) => Promise<unknown>;
 
@@ -35,3 +36,7 @@ handlers.deshi_daemon_poll_until_done = daemonPollUntilDoneHandler as HostToolHa
 // `src/deshi/host-tools/deshi_daemon_list_skills.ts` のヘッダコメント参照。
 handlers.deshi_daemon_list_skills = daemonListSkillsHandler as HostToolHandler;
 handlers.deshi_daemon_refresh_skills = daemonListSkillsHandler as HostToolHandler;
+// deshi-wiki / deshi-raw 配下のハイブリッド検索 (qmd CLI バックエンド)。
+// skill spawn を介さずに `GET /files/search` を直接 wrap するので、
+// 1 ターンで複数回叩く探索用途に最適 (ADR-0009)。
+handlers.deshi_daemon_search_files = daemonSearchFilesHandler as HostToolHandler;
