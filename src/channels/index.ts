@@ -58,3 +58,6 @@ import './whatsapp.js';
 
 // deltachat (native, no Chat SDK)
 // import './deltachat.js'
+
+// deshi 固有 channel adapter (LINE 等) — barrel 1 行ルール (ADR-0005)
+import './deshi.js';

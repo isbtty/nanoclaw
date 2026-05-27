@@ -119,6 +119,8 @@ const SUPPORTS_THREADS: Record<string, boolean> = {
   wechat: false,
   // upstream src/channels/cli.ts:58
   cli: false,
+  // src/deshi/channels/line.ts (deshi 固有、LINE は thread 概念なし)
+  line: false,
 };
 
 export interface SkillExecutionNotificationFile {
