@@ -20,6 +20,7 @@ import path from 'path';
 import { GROUPS_DIR } from './config.js';
 import type { McpServerConfig } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
+import { fetchDeshiDelegationFragment } from './deshi/fetch-delegation-fragment.js';
 import { log } from './log.js';
 import type { AgentGroup } from './types.js';
 
@@ -40,7 +41,7 @@ const COMPOSED_HEADER = '<!-- Composed at spawn — do not edit. Edit CLAUDE.loc
  * fragments, and MCP server fragments declared in `container.json`. Creates
  * an empty `CLAUDE.local.md` if missing.
  */
-export function composeGroupClaudeMd(group: AgentGroup): void {
+export async function composeGroupClaudeMd(group: AgentGroup): Promise<void> {
   const groupDir = path.resolve(GROUPS_DIR, group.folder);
   if (!fs.existsSync(groupDir)) {
     fs.mkdirSync(groupDir, { recursive: true });
@@ -98,11 +99,41 @@ export function composeGroupClaudeMd(group: AgentGroup): void {
   // MCP server fragments — inline instructions from container.json for
   // user-added external MCP servers.
   for (const [name, mcp] of Object.entries(mcpServers)) {
+    if (name === 'deshi') continue; // handled below via auto-fetch
     if (mcp.instructions) {
       desired.set(`mcp-${name}.md`, {
         type: 'inline',
         content: mcp.instructions,
       });
+    }
+  }
+
+  // deshi MCP delegation fragment — fetched fresh from deshi daemon at
+  // compose time so editing `<deshi-repo>/.deshi/nanoclaw-delegation.md`
+  // takes effect on the next spawn (isbtty/deshi#319). On fetch failure
+  // (daemon down, network) we fall back to the cached file written by a
+  // previous spawn so the group keeps booting with stale but valid policy.
+  if (mcpServers.deshi) {
+    let content: string | null = null;
+    try {
+      content = await fetchDeshiDelegationFragment();
+    } catch (err) {
+      const cachedPath = path.join(fragmentsDir, 'mcp-deshi.md');
+      if (fs.existsSync(cachedPath)) {
+        content = fs.readFileSync(cachedPath, 'utf-8');
+        log.warn(
+          'fetchDeshiDelegationFragment failed; reusing cached mcp-deshi.md',
+          { err, groupId: group.id },
+        );
+      } else {
+        log.warn(
+          'fetchDeshiDelegationFragment failed; no cached mcp-deshi.md available',
+          { err, groupId: group.id },
+        );
+      }
+    }
+    if (content !== null) {
+      desired.set('mcp-deshi.md', { type: 'inline', content });
     }
   }
 
