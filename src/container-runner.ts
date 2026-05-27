@@ -131,7 +131,7 @@ async function spawnContainer(session: Session): Promise<void> {
   // buildMounts and buildContainerArgs so side effects (mkdir, etc.) fire once.
   const { provider, contribution } = resolveProviderContribution(session, agentGroup, containerConfig);
 
-  const mounts = buildMounts(agentGroup, session, containerConfig, contribution);
+  const mounts = await buildMounts(agentGroup, session, containerConfig, contribution);
   const containerName = `nanoclaw-v2-${agentGroup.folder}-${Date.now()}`;
   // OneCLI agent identifier is always the agent group id — stable across
   // sessions and reversible via getAgentGroup() for approval routing.
@@ -239,12 +239,12 @@ function resolveProviderContribution(
   return { provider, contribution };
 }
 
-function buildMounts(
+async function buildMounts(
   agentGroup: AgentGroup,
   session: Session,
   containerConfig: import('./container-config.js').ContainerConfig,
   providerContribution: ProviderContainerContribution,
-): VolumeMount[] {
+): Promise<VolumeMount[]> {
   const projectRoot = process.cwd();
 
   // Per-group filesystem state lives forever after first creation. Init is
@@ -258,7 +258,9 @@ function buildMounts(
 
   // Compose CLAUDE.md fresh every spawn from the shared base, enabled skill
   // fragments, and MCP server instructions. See `claude-md-compose.ts`.
-  composeGroupClaudeMd(agentGroup);
+  // async because the deshi delegation fragment is fetched from deshi
+  // daemon on every spawn (isbtty/deshi#319).
+  await composeGroupClaudeMd(agentGroup);
 
   const mounts: VolumeMount[] = [];
   const sessDir = sessionDir(agentGroup.id, session.id);
