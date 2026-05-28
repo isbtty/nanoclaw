@@ -6,15 +6,14 @@
  *   - supportsThreads = false (LINE に thread 概念なし)
  *   - platformId = `line:user|group|room:{id}` 自己記述形式
  *   - 送信は push API 統一 (reply token 不使用 — 寿命 ~1 分の管理を回避)
- *   - inbound 添付は `api-data.line.me` から DL、`DATA_DIR/attachments/` に保存
+ *   - inbound 添付は `api-data.line.me` から DL、base64 で `attachments[].data` に
+ *     詰めて router に渡す (session-manager が session inbox に展開する設計)
  *   - DM は無条件 isMention=true (router に attentive 判定させるため)
  */
 import crypto from 'crypto';
-import fs from 'fs';
 import http from 'http';
-import path from 'path';
 
-import { ASSISTANT_NAME, DATA_DIR } from '../../config.js';
+import { ASSISTANT_NAME } from '../../config.js';
 import { readEnvFile } from '../../env.js';
 import { log } from '../../log.js';
 import { isSafeAttachmentName } from '../../attachment-safety.js';
@@ -172,13 +171,13 @@ registerChannelAdapter('line', {
 
     async function downloadContent(
       msg: LineMessage,
-    ): Promise<{ type: string; name: string; localPath: string } | null> {
+    ): Promise<{ type: string; name: string; mimeType: string; size: number; data: string } | null> {
       const contentType = msg.type;
-      const typeMap: Record<string, { type: string; ext: string }> = {
-        image: { type: 'image', ext: '.jpg' },
-        video: { type: 'video', ext: '.mp4' },
-        audio: { type: 'audio', ext: '.m4a' },
-        file: { type: 'document', ext: '' },
+      const typeMap: Record<string, { type: string; ext: string; mimeType: string }> = {
+        image: { type: 'image', ext: '.jpg', mimeType: 'image/jpeg' },
+        video: { type: 'video', ext: '.mp4', mimeType: 'video/mp4' },
+        audio: { type: 'audio', ext: '.m4a', mimeType: 'audio/mp4' },
+        file: { type: 'document', ext: '', mimeType: 'application/octet-stream' },
       };
       const meta = typeMap[contentType];
       if (!meta) return null;
@@ -200,15 +199,20 @@ registerChannelAdapter('line', {
         }
         const buf = Buffer.from(await res.arrayBuffer());
 
+        // session-manager が `attachments[].data` (base64) を受け取って
+        // `inbox/<messageId>/<filename>` に書き出し、`localPath` をセットする。
+        // 我々はディスク書き込みをせず、base64 で渡すだけ。
         const rawFilename = msg.fileName;
         const fallback = `line-${msg.id}${meta.ext}`;
-        const filename = rawFilename && isSafeAttachmentName(rawFilename) ? `line-${msg.id}-${rawFilename}` : fallback;
+        const name = rawFilename && isSafeAttachmentName(rawFilename) ? rawFilename : fallback;
 
-        const attachDir = path.join(DATA_DIR, 'attachments');
-        fs.mkdirSync(attachDir, { recursive: true });
-        const filePath = path.join(attachDir, filename);
-        fs.writeFileSync(filePath, buf);
-        return { type: meta.type, name: filename, localPath: `attachments/${filename}` };
+        return {
+          type: meta.type,
+          name,
+          mimeType: res.headers.get('content-type') ?? meta.mimeType,
+          size: buf.length,
+          data: buf.toString('base64'),
+        };
       } catch (err) {
         log.warn('LINE content download error', { err, messageId: msg.id });
         return null;
@@ -261,7 +265,13 @@ registerChannelAdapter('line', {
 
       const msg = event.message;
       let text = '';
-      const attachments: Array<{ type: string; name: string; localPath: string }> = [];
+      const attachments: Array<{
+        type: string;
+        name: string;
+        mimeType: string;
+        size: number;
+        data: string;
+      }> = [];
 
       if (msg.type === 'text') {
         text = msg.text ?? '';
