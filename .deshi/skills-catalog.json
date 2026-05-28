@@ -37,6 +37,19 @@
         "container/CLAUDE.md"
       ],
       "introducedIn": "v0.1.0"
+    },
+    {
+      "name": "deshi-add-line",
+      "kind": "feature",
+      "version": "0.1.0",
+      "owner": "@isbtty/deshi-core",
+      "sources": [
+        ".claude/skills/deshi-add-line/",
+        "src/deshi/channels/line.ts",
+        "src/deshi/channels/index.ts",
+        "src/channels/deshi.ts"
+      ],
+      "introducedIn": "v0.2.0"
     }
   ]
 }
