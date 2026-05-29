@@ -182,6 +182,28 @@ log "=== Bootstrap started ==="
 
 detect_platform
 
+# --- gh fork-guard (cross-fork 誤投稿対策、ADR-0013) ---
+# upstream `nanocoai/nanoclaw` と `origin` (= isbtty/nanoclaw) の両方を remote に
+# 持つ fork clone での `gh pr/issue create` 誤爆を防ぐ。`install-gh-fork-guard.sh`
+# は端末-wide で wrapper を設置 (idempotent)、`setup-fork-clone.sh` はこの clone
+# の gh default を fork に pin する (idempotent)。両者とも defensive 実装。
+# 詳細: .deshi/adr/0013-gh-fork-guard.md
+log "=== gh fork-guard setup ==="
+if [ -x "$PROJECT_ROOT/scripts/dev/install-gh-fork-guard.sh" ]; then
+  if bash "$PROJECT_ROOT/scripts/dev/install-gh-fork-guard.sh" 2>&1 | tee -a "$LOG_FILE"; then
+    log "gh fork-guard wrapper installed"
+  else
+    log "gh fork-guard wrapper install failed (non-fatal)"
+  fi
+fi
+if [ -x "$PROJECT_ROOT/scripts/dev/setup-fork-clone.sh" ]; then
+  if bash "$PROJECT_ROOT/scripts/dev/setup-fork-clone.sh" 2>&1 | tee -a "$LOG_FILE"; then
+    log "gh fork-pin applied"
+  else
+    log "gh fork-pin failed (non-fatal)"
+  fi
+fi
+
 check_node
 if [ "$NODE_OK" = "false" ]; then
   log "Node missing or too old — running setup/install-node.sh"
