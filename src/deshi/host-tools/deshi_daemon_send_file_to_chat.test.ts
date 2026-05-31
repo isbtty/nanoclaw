@@ -84,6 +84,74 @@ describe('daemonSendFileToChatHandler', () => {
     expect(Buffer.from(files[0].contentBase64, 'base64').toString('utf-8')).toBe('<html>hi</html>');
   });
 
+  it('.md は renderedHtml を優先し、filename を .html に差し替えて送る', async () => {
+    mockFilesContent({
+      path: 'outputs/foo/notes.md',
+      name: 'notes.md',
+      extension: '.md',
+      size: 9,
+      encoding: 'utf-8',
+      content: '# Title\nbody',
+      renderedHtml: '<html><body><h1>Title</h1><p>body</p></body></html>',
+    });
+
+    const result = await daemonSendFileToChatHandler({
+      path: 'outputs/foo/notes.md',
+      channelContext,
+    });
+
+    expect(result.filename).toBe('notes.html');
+    const call = vi.mocked(skillExecutionNotificationsHandler).mock.calls[0][0] as Record<string, unknown>;
+    const files = call.files as Array<{ filename: string; contentBase64: string }>;
+    expect(files[0].filename).toBe('notes.html');
+    expect(Buffer.from(files[0].contentBase64, 'base64').toString('utf-8')).toBe(
+      '<html><body><h1>Title</h1><p>body</p></body></html>',
+    );
+  });
+
+  it('.md でも renderedHtml が空なら raw md にフォールバック (filename はそのまま)', async () => {
+    mockFilesContent({
+      path: 'outputs/foo/notes.md',
+      name: 'notes.md',
+      extension: '.md',
+      size: 9,
+      encoding: 'utf-8',
+      content: '# Title\nbody',
+      // renderedHtml omitted
+    });
+
+    const result = await daemonSendFileToChatHandler({
+      path: 'outputs/foo/notes.md',
+      channelContext,
+    });
+
+    expect(result.filename).toBe('notes.md');
+    const call = vi.mocked(skillExecutionNotificationsHandler).mock.calls[0][0] as Record<string, unknown>;
+    const files = call.files as Array<{ filename: string; contentBase64: string }>;
+    expect(files[0].filename).toBe('notes.md');
+    expect(Buffer.from(files[0].contentBase64, 'base64').toString('utf-8')).toBe('# Title\nbody');
+  });
+
+  it('.md → .html 差し替え時に req.filename override も .html 化される', async () => {
+    mockFilesContent({
+      path: 'outputs/foo/notes.md',
+      name: 'notes.md',
+      extension: '.md',
+      size: 9,
+      encoding: 'utf-8',
+      content: '# Title',
+      renderedHtml: '<html><h1>Title</h1></html>',
+    });
+
+    const result = await daemonSendFileToChatHandler({
+      path: 'outputs/foo/notes.md',
+      filename: '会議メモ.md',
+      channelContext,
+    });
+
+    expect(result.filename).toBe('会議メモ.html');
+  });
+
   it('base64 ファイルはそのまま透過する (二重 encode しない)', async () => {
     const original = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'); // fake PNG magic
     mockFilesContent({
