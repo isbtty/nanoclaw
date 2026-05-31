@@ -4,7 +4,13 @@
  * Thin orchestrator: init DB, run migrations, start channel adapters,
  * start delivery polls, start sweep, handle shutdown.
  */
+import dns from 'dns';
 import path from 'path';
+
+// Prefer IPv4 in DNS resolution: undici/fetch otherwise hangs with ETIMEDOUT
+// on hosts that advertise AAAA records but have no working IPv6 route.
+// The CLI flag --dns-result-order does not propagate into undici on Node 20.
+dns.setDefaultResultOrder('ipv4first');
 
 import { backfillContainerConfigs } from './backfill-container-configs.js';
 import { DATA_DIR } from './config.js';

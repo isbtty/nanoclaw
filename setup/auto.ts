@@ -22,9 +22,15 @@
  * headless `claude -p` call for IANA-zone resolution.
  */
 import { spawn, spawnSync } from 'child_process';
+import dns from 'dns';
 import fs from 'fs';
 import * as os from 'os';
 import path from 'path';
+
+// Prefer IPv4 in DNS resolution: undici/fetch otherwise hangs with ETIMEDOUT
+// on hosts that advertise AAAA records but have no working IPv6 route.
+// The CLI flag --dns-result-order does not propagate into undici on Node 20.
+dns.setDefaultResultOrder('ipv4first');
 
 import * as p from '@clack/prompts';
 import k from 'kleur';
