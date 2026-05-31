@@ -104,8 +104,11 @@ export async function daemonSendFileToChatHandler(body: unknown): Promise<Daemon
   //    preview で .md を扱えず iPhone でも文字化けする一方、.html は document
   //    preview がブラウザレンダリングしてくれる。旧 TelegramNotifier.sendDocument
   //    の convertMdToHtml と同じ振る舞い (deshi#179, #309)。
-  const sourceExt = (fileData.extension ?? '').toLowerCase();
-  const isMarkdown = sourceExt === '.md' || sourceExt === '.markdown';
+  // deshi daemon の `/files/content` は extension を leading dot 抜きで返す
+  // (daemon/src/routes/files.ts:446 `extension: ext.slice(1)`)。historical な
+  // 揺れに保険をかけて両形式を許容する。
+  const sourceExt = (fileData.extension ?? '').toLowerCase().replace(/^\./, '');
+  const isMarkdown = sourceExt === 'md' || sourceExt === 'markdown';
   const useRenderedHtml = isMarkdown && typeof fileData.renderedHtml === 'string' && fileData.renderedHtml.length > 0;
 
   const contentBase64 = useRenderedHtml
