@@ -84,11 +84,16 @@ describe('daemonSendFileToChatHandler', () => {
     expect(Buffer.from(files[0].contentBase64, 'base64').toString('utf-8')).toBe('<html>hi</html>');
   });
 
+  // NOTE: deshi daemon の `/files/content` は `extension` を **leading dot 抜き**
+  // で返す (daemon/src/routes/files.ts:446 `extension: ext.slice(1)`)。
+  // 本テストはその実体に合わせて `md` 形式を使う。直前の修正で `.md` 形式と
+  // 誤比較していたため md→html 差し替えが全くトリガーしないリグレッションが
+  // 出ていたので、ここでフィクスチャ形式を本物に揃えて防止する。
   it('.md は renderedHtml を優先し、filename を .html に差し替えて送る', async () => {
     mockFilesContent({
       path: 'outputs/foo/notes.md',
       name: 'notes.md',
-      extension: '.md',
+      extension: 'md',
       size: 9,
       encoding: 'utf-8',
       content: '# Title\nbody',
@@ -113,7 +118,7 @@ describe('daemonSendFileToChatHandler', () => {
     mockFilesContent({
       path: 'outputs/foo/notes.md',
       name: 'notes.md',
-      extension: '.md',
+      extension: 'md',
       size: 9,
       encoding: 'utf-8',
       content: '# Title\nbody',
@@ -136,7 +141,7 @@ describe('daemonSendFileToChatHandler', () => {
     mockFilesContent({
       path: 'outputs/foo/notes.md',
       name: 'notes.md',
-      extension: '.md',
+      extension: 'md',
       size: 9,
       encoding: 'utf-8',
       content: '# Title',
@@ -150,6 +155,25 @@ describe('daemonSendFileToChatHandler', () => {
     });
 
     expect(result.filename).toBe('会議メモ.html');
+  });
+
+  it('extension が dot 付きで来ても (`.md`) 後方互換で md として扱う', async () => {
+    mockFilesContent({
+      path: 'outputs/foo/notes.md',
+      name: 'notes.md',
+      extension: '.md',
+      size: 9,
+      encoding: 'utf-8',
+      content: '# T',
+      renderedHtml: '<html><h1>T</h1></html>',
+    });
+
+    const result = await daemonSendFileToChatHandler({
+      path: 'outputs/foo/notes.md',
+      channelContext,
+    });
+
+    expect(result.filename).toBe('notes.html');
   });
 
   it('base64 ファイルはそのまま透過する (二重 encode しない)', async () => {
