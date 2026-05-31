@@ -4,10 +4,10 @@
     "repo": "nanocoai/nanoclaw",
     "main": {
       "tag": null,
-      "sha": "7e37b13aabd0d7ed8ebdedfa96cecad8e1e89796",
-      "lastSyncedAt": "2026-05-12T16:42:21+09:00",
-      "lastSyncedBy": "han2210mh@gmail.com",
-      "policy": "merge-base"
+      "sha": "3601a8a1febb6ec16391099981c533798a203e3e",
+      "lastSyncedAt": "2026-05-31T18:15:47+09:00",
+      "lastSyncedBy": "ishibe.tatsuya@gmail.com",
+      "policy": "target"
     },
     "channels": {
       "sha": "8e91d37bc9c14b06580bda4b46c85f33cf755b15",
