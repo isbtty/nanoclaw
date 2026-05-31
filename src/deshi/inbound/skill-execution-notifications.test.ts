@@ -341,6 +341,71 @@ describe('skillExecutionNotificationsHandler — files (base64 → outbox)', () 
     const content = JSON.parse(rows[0]!.content) as { text: string; files: string[] };
     expect(content.files).toEqual(['arch.png']);
   });
+
+  it('splits N-file payload into N messages_out rows (1 file each)', async () => {
+    // Telegram adapter (@chat-adapter/telegram) は 1 message = 1 file 制限。
+    // 2 file payload は 2 rows × 1 file each に split される。
+    // row 0 が text + 1 file、 row 1 が file-only。
+    // outbox は per-row dir (`outbox/<base>/`, `outbox/<base>-1/`) に分ける。
+    const { agentId } = seedAgentAndChannel();
+
+    const ja = Buffer.from('<html>ja</html>');
+    const en = Buffer.from('<html>en</html>');
+    const result = (await skillExecutionNotificationsHandler({
+      channel: 'telegram',
+      chatId: 'tg:chat-1',
+      message: 'Morning Briefing',
+      files: [
+        { filename: 'ja.html', contentBase64: ja.toString('base64') },
+        { filename: 'en.html', contentBase64: en.toString('base64') },
+      ],
+    })) as SkillExecutionNotificationResponse;
+
+    // 2 rows 書かれている
+    const rows = readMessagesOut(agentId, result.sessionId);
+    expect(rows).toHaveLength(2);
+
+    // row 0: messageId, text + ja.html
+    expect(rows[0]!.id).toBe(result.messageId);
+    const c0 = JSON.parse(rows[0]!.content) as { text: string; files: string[] };
+    expect(c0.text).toBe('Morning Briefing');
+    expect(c0.files).toEqual(['ja.html']);
+
+    // row 1: <messageId>-1, text 空 + en.html
+    expect(rows[1]!.id).toBe(`${result.messageId}-1`);
+    const c1 = JSON.parse(rows[1]!.content) as { text: string; files: string[] };
+    expect(c1.text).toBe('');
+    expect(c1.files).toEqual(['en.html']);
+
+    // outbox は per-row dir
+    const sess = sessionDir(agentId, result.sessionId);
+    expect(fs.readFileSync(path.join(sess, 'outbox', result.messageId, 'ja.html'))).toEqual(ja);
+    expect(fs.readFileSync(path.join(sess, 'outbox', `${result.messageId}-1`, 'en.html'))).toEqual(en);
+  });
+
+  it('multi-file: messages_in row keeps all files in one logical event', async () => {
+    // split は messages_out (Telegram 配信) だけ。 messages_in は
+    // 「1 つの skill 実行で N file 返ってきた」として 1 row に集約する。
+    const { agentId } = seedAgentAndChannel();
+
+    const result = (await skillExecutionNotificationsHandler({
+      channel: 'telegram',
+      chatId: 'tg:chat-1',
+      message: 'briefing',
+      files: [
+        { filename: 'ja.html', contentBase64: Buffer.from('ja').toString('base64') },
+        { filename: 'en.html', contentBase64: Buffer.from('en').toString('base64') },
+      ],
+    })) as SkillExecutionNotificationResponse;
+
+    const inRows = readMessagesIn(agentId, result.sessionId);
+    const webhook = inRows.find((r) => r.kind === 'webhook');
+    expect(webhook).toBeDefined();
+    const parsed = JSON.parse(webhook!.content) as {
+      payload: { text: string; files: string[] };
+    };
+    expect(parsed.payload.files).toEqual(['ja.html', 'en.html']);
+  });
 });
 
 describe('skillExecutionNotificationsHandler — effectiveSessionMode boundaries', () => {
