@@ -10,6 +10,7 @@ import os from 'os';
 import path from 'path';
 
 import { log } from '../src/log.js';
+import { readEnvFile } from '../src/env.js';
 import { getLaunchdLabel, getSystemdUnit } from '../src/install-slug.js';
 import { cleanupUnhealthyPeers } from './peer-cleanup.js';
 import {
@@ -135,6 +136,14 @@ function setupLaunchd(
   );
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
 
+  // deshi host-tools bridge needs DESHI_DAEMON_URL and DESHI_DAEMON_DEVICE_SECRET
+  // because `composeGroupClaudeMd` → `fetchDeshiDelegationFragment` reads them
+  // directly from process.env (no dotenv fallback). launchd does NOT inherit
+  // the user's interactive shell env, so we must explicitly project these
+  // values from .env into the plist's EnvironmentVariables.
+  const deshiEnv = readEnvFile(['DESHI_DAEMON_URL', 'DESHI_DAEMON_DEVICE_SECRET']);
+  const extraEnvXml = renderExtraEnvVars(deshiEnv);
+
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -157,7 +166,7 @@ function setupLaunchd(
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
         <key>HOME</key>
-        <string>${homeDir}</string>
+        <string>${homeDir}</string>${extraEnvXml}
     </dict>
     <key>StandardOutPath</key>
     <string>${projectRoot}/logs/nanoclaw.log</string>
@@ -168,6 +177,17 @@ function setupLaunchd(
 
   fs.writeFileSync(plistPath, plist);
   log.info('Wrote launchd plist', { plistPath });
+
+  // If we wrote a secret into the plist, restrict permissions so other local
+  // users cannot read it (parallel to the per-skill plist convention in
+  // `deshi-add-host-tools`).
+  if (deshiEnv.DESHI_DAEMON_DEVICE_SECRET) {
+    try {
+      fs.chmodSync(plistPath, 0o600);
+    } catch (err) {
+      log.warn('Failed to chmod plist 600 (contains secret)', { err });
+    }
+  }
 
   // Unload first to force launchd to drop any cached plist and re-read from
   // disk. Bare `launchctl load` on an already-loaded plist errors with
@@ -476,4 +496,35 @@ function setupNohupFallback(
     STATUS: 'success',
     LOG: 'logs/setup.log',
   });
+}
+
+/**
+ * Render extra `EnvironmentVariables` entries as a leading-newline-prefixed
+ * XML fragment to be spliced into the plist between `HOME` and the closing
+ * `</dict>`. Empty / missing values are silently dropped so partial .env
+ * configurations still produce valid plist output.
+ *
+ * Exported for service.test.ts.
+ */
+export function renderExtraEnvVars(env: Record<string, string | undefined>): string {
+  const entries = Object.entries(env).filter(([, v]) => typeof v === 'string' && v.length > 0);
+  if (entries.length === 0) return '';
+  return (
+    '\n' +
+    entries
+      .map(
+        ([k, v]) =>
+          `        <key>${escapeXml(k)}</key>\n        <string>${escapeXml(v as string)}</string>`,
+      )
+      .join('\n')
+  );
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
