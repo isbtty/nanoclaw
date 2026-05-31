@@ -3,9 +3,15 @@
 # inject-launchd-env.sh — deshi host-tools 用 env を nanoclaw 本体 plist に注入する
 # post-install ヘルパ (macOS のみ)。
 #
-# 背景:
-#   `composeGroupClaudeMd` → `fetchDeshiDelegationFragment` は host プロセスから
-#   `process.env.DESHI_DAEMON_DEVICE_SECRET` を直読みで参照する (dotenv fallback 無し)。
+# 【2026-06 更新】通常このスクリプトは不要です。
+#   `fetchDeshiDelegationFragment` に `.env` fallback (readEnvFile) を入れたため、
+#   launchd host は plist に env が無くても process.cwd()/.env から DESHI_DAEMON_* を
+#   読みます (host の WorkingDirectory はプロジェクトルート)。本スクリプトは plist
+#   レベルで env を固定したい人向けの任意ヘルパとして残しています。
+#
+# 背景 (歴史的経緯):
+#   以前は `composeGroupClaudeMd` → `fetchDeshiDelegationFragment` が host プロセスから
+#   `process.env.DESHI_DAEMON_DEVICE_SECRET` を直読みし、dotenv fallback が無かった。
 #   一方 `bash nanoclaw.sh` (= `setup/auto.ts` → `setup/service.ts` → `setupLaunchd`)
 #   が生成する `~/Library/LaunchAgents/com.nanoclaw-v2-<slug>.plist` の
 #   EnvironmentVariables には PATH / HOME しか入らない。launchd-spawned プロセスは

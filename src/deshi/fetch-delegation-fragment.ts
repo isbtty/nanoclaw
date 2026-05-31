@@ -1,3 +1,5 @@
+import { readEnvFile } from '../env.js';
+
 /**
  * Fetch the deshi MCP delegation policy fragment from deshi daemon's
  * `GET /nanoclaw-fragment` (isbtty/deshi#319, #322).
@@ -13,13 +15,21 @@
  * It is host-internal, used only by the host process during compose.
  *
  * Auth: Bearer matches the host-tools-server pattern (`<secret>:nanoclaw`).
+ *
+ * Env resolution: `process.env` first, then a `.env` fallback via `readEnvFile`
+ * (same pattern as `config.ts`). The fallback matters because the launchd-spawned
+ * host process does not inherit the interactive shell env and the dynamically
+ * generated `com.nanoclaw-v2-<slug>` plist carries only PATH/HOME — so without it
+ * `DESHI_DAEMON_DEVICE_SECRET` lives only in `.env` and this throws, dropping the
+ * delegation fragment. Reading `.env` here removes the need for any plist injection.
  */
 
 const DEFAULT_DAEMON_URL = 'http://localhost:3100';
 
 export async function fetchDeshiDelegationFragment(opts: { signal?: AbortSignal } = {}): Promise<string> {
-  const url = process.env.DESHI_DAEMON_URL ?? DEFAULT_DAEMON_URL;
-  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET;
+  const envConfig = readEnvFile(['DESHI_DAEMON_URL', 'DESHI_DAEMON_DEVICE_SECRET']);
+  const url = process.env.DESHI_DAEMON_URL || envConfig.DESHI_DAEMON_URL || DEFAULT_DAEMON_URL;
+  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET || envConfig.DESHI_DAEMON_DEVICE_SECRET;
   if (!secret) {
     throw new Error('DESHI_DAEMON_DEVICE_SECRET is not set on host');
   }

@@ -1,16 +1,24 @@
 # launchd env injection (deshi 用)
 
-## 何のため
+> **【2026-06 更新】この手動ステップは通常不要になりました。**
+> `fetchDeshiDelegationFragment` に `.env` fallback (`readEnvFile`) を入れたため、
+> launchd host は plist に env が無くても `process.cwd()/.env` から
+> `DESHI_DAEMON_*` を直接読みます (host の `WorkingDirectory` は
+> `setup/service.ts:setupLaunchd` がプロジェクトルートに設定済み)。
+> 下記スクリプトは **plist レベルで env を固定したい人向けの任意ヘルパ**として残します。
+> 背景は [`src/deshi/fetch-delegation-fragment.ts`](../../src/deshi/fetch-delegation-fragment.ts) の JSDoc を参照。
 
-`composeGroupClaudeMd` → `fetchDeshiDelegationFragment` は host プロセスから
-`process.env.DESHI_DAEMON_DEVICE_SECRET` を**直読み**で参照する (dotenv fallback 無し)。
-deshi daemon 側 `GET /nanoclaw-fragment` の Bearer 認証に使う。
+## 何のため (歴史的経緯)
 
-ところが `bash nanoclaw.sh` (= `setup/auto.ts` → `setup/service.ts` → `setupLaunchd`)
+以前は `composeGroupClaudeMd` → `fetchDeshiDelegationFragment` が host プロセスから
+`process.env.DESHI_DAEMON_DEVICE_SECRET` を**直読み**し、**dotenv fallback が無かった**。
+deshi daemon 側 `GET /nanoclaw-fragment` の Bearer 認証に使う値。
+
+`bash nanoclaw.sh` (= `setup/auto.ts` → `setup/service.ts` → `setupLaunchd`)
 が生成する `~/Library/LaunchAgents/com.nanoclaw-v2-<slug>.plist` の
 `EnvironmentVariables` には **PATH と HOME しか入らない**。launchd-spawned
 プロセスは user の interactive shell env を継承しないため、 `.env` に
-`DESHI_DAEMON_*` を書いても plist 経由では届かない。
+`DESHI_DAEMON_*` を書いても plist 経由では届かなかった。
 
 結果として `bash nanoclaw.sh` 後に nanoclaw のログには:
 
@@ -19,19 +27,20 @@ WARN  fetchDeshiDelegationFragment failed; no cached mcp-deshi.md available
 err: Error: DESHI_DAEMON_DEVICE_SECRET is not set on host
 ```
 
-が出続け、 agent container は deshi delegation fragment 無しで起動する
-(= `mcp__deshi__daemon_gog` を知らない agent になり、 Google Calendar 質問で
-OneCLI の `connect-google-calendar` 接続フローに誘導されてしまう)。
+が出続け、 agent container は deshi delegation fragment 無しで起動した
+(= `mcp__deshi__daemon_gog` を知らない agent になり、 GitHub issue 依頼や
+Google Calendar 質問で OneCLI の接続フローに誘導されてしまう)。
 
-## 解決
+→ **`.env` fallback の追加でこの症状は解消**。以下のスクリプトは plist 固定派向けの任意手段。
 
-`.deshi/scripts/inject-launchd-env.sh` を `bash nanoclaw.sh` の **直後に 1 回手動で**
-走らせる:
+## (任意) plist に env を固定したい場合
+
+`.deshi/scripts/inject-launchd-env.sh` を走らせると plist の
+`EnvironmentVariables` に `DESHI_DAEMON_*` を merge できる:
 
 ```bash
 cd ~/code/nanoclaw
-bash nanoclaw.sh                            # ← 既存の初回 setup
-bash .deshi/scripts/inject-launchd-env.sh   # ← この doc が紹介するスクリプト
+bash .deshi/scripts/inject-launchd-env.sh   # 任意。fallback があるので通常は不要
 ```
 
 スクリプトは:
