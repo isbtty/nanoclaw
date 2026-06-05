@@ -164,6 +164,35 @@ describe('session manager', () => {
     expect(fs.existsSync(msgOutbox)).toBe(false);
   });
 
+  it('should render markdown outbox files to UTF-8 HTML to avoid charset mojibake', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const dir = sessionDir('ag-1', 'sess-test');
+    const msgOutbox = path.join(dir, 'outbox', 'msg-1');
+    fs.mkdirSync(msgOutbox, { recursive: true });
+    // BOM-less UTF-8 markdown with CJK — the case that previews as mojibake.
+    fs.writeFileSync(path.join(msgOutbox, 'report.md'), '# 事業仮説\n\n本文テスト');
+
+    const files = readOutboxFiles('ag-1', 'sess-test', 'msg-1', ['report.md']);
+    expect(files).toHaveLength(1);
+    expect(files?.[0]?.filename).toBe('report.html');
+    const html = files?.[0]?.data.toString('utf-8') ?? '';
+    expect(html).toContain('<meta charset="utf-8">');
+    expect(html).toContain('事業仮説'); // CJK preserved as valid UTF-8
+    expect(html).toContain('<h1');
+  });
+
+  it('should pass non-markdown outbox files through untouched', () => {
+    initSessionFolder('ag-1', 'sess-test');
+    const dir = sessionDir('ag-1', 'sess-test');
+    const msgOutbox = path.join(dir, 'outbox', 'msg-1');
+    fs.mkdirSync(msgOutbox, { recursive: true });
+    fs.writeFileSync(path.join(msgOutbox, 'data.txt'), 'plain');
+
+    const files = readOutboxFiles('ag-1', 'sess-test', 'msg-1', ['data.txt']);
+    expect(files?.[0]?.filename).toBe('data.txt');
+    expect(files?.[0]?.data.toString()).toBe('plain');
+  });
+
   it('should reject inbound attachment writes through a pre-placed symlinked inbox dir', () => {
     initSessionFolder('ag-1', 'sess-test');
     const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
