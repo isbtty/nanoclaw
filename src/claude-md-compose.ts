@@ -121,15 +121,9 @@ export async function composeGroupClaudeMd(group: AgentGroup): Promise<void> {
       const cachedPath = path.join(fragmentsDir, 'mcp-deshi.md');
       if (fs.existsSync(cachedPath)) {
         content = fs.readFileSync(cachedPath, 'utf-8');
-        log.warn(
-          'fetchDeshiDelegationFragment failed; reusing cached mcp-deshi.md',
-          { err, groupId: group.id },
-        );
+        log.warn('fetchDeshiDelegationFragment failed; reusing cached mcp-deshi.md', { err, groupId: group.id });
       } else {
-        log.warn(
-          'fetchDeshiDelegationFragment failed; no cached mcp-deshi.md available',
-          { err, groupId: group.id },
-        );
+        log.warn('fetchDeshiDelegationFragment failed; no cached mcp-deshi.md available', { err, groupId: group.id });
       }
     }
     if (content !== null) {
