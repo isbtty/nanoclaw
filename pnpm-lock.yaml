@@ -18,7 +18,7 @@ importers:
         specifier: ^4.24.0
         version: 4.26.0
       '@chat-adapter/gchat':
-        specifier: ^4.24.0
+        specifier: 4.26.0
         version: 4.26.0
       '@chat-adapter/github':
         specifier: ^4.24.0
