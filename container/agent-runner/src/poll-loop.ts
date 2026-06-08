@@ -1,3 +1,6 @@
+import { appendFileSync, mkdirSync } from 'fs';
+import path from 'path';
+
 import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
 import { getPendingMessages, markProcessing, markCompleted, type MessageInRow } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
@@ -48,6 +51,68 @@ function log(msg: string): void {
 
 function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * True for webhook rows the deshi inbound handler wrote AFTER it already
+ * delivered the same content to the user via outbox (the
+ * `kind='webhook', source='deshi'` rows from
+ * `POST /inbound/deshi/skill-execution-notifications`, see
+ * `src/deshi/inbound/skill-execution-notifications.ts`). These rows would
+ * cause double-delivery if surfaced to the agent prompt, since the agent
+ * naturally relays / summarizes any `<webhook>` it sees but the user has
+ * already received the content. Upstream webhook sources (e.g. github) are
+ * NOT filtered — for those the agent IS expected to react.
+ */
+export function isAlreadyDeliveredDeshiWebhook(msg: MessageInRow): boolean {
+  if (msg.kind !== 'webhook') return false;
+  try {
+    const c = JSON.parse(msg.content) as { source?: string };
+    return c.source === 'deshi';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Append delivered-webhook rows to `<cwd>/.deshi/inbox.log` as JSON Lines.
+ *
+ * The file is the agent's authoritative record of background events that
+ * have already been pushed to the user. The agent never sees these in its
+ * prompt — it must `Read` this file on demand when the user references a
+ * past event (see container/CLAUDE.md `.deshi/inbox.log` section).
+ *
+ * Best-effort write — a failure here must not crash the poll loop; we still
+ * markCompleted in the caller either way so the row doesn't pile up as
+ * pending. If the disk write fails, the agent loses the historical context
+ * for that one event, but the user has already received the content via
+ * outbox, so the immediate UX is unaffected.
+ */
+export function appendInboxLog(cwd: string, webhooks: MessageInRow[]): void {
+  if (webhooks.length === 0) return;
+  const logPath = path.join(cwd, '.deshi', 'inbox.log');
+  try {
+    mkdirSync(path.dirname(logPath), { recursive: true });
+    const lines = webhooks.map((w) => {
+      let content: { source?: string; event?: string; payload?: unknown } = {};
+      try {
+        content = JSON.parse(w.content);
+      } catch {
+        // unparseable content — record id + raw so it's not silently lost
+        return JSON.stringify({ ts: w.timestamp, id: w.id, _unparseable: true });
+      }
+      return JSON.stringify({
+        ts: w.timestamp,
+        id: w.id,
+        source: content.source ?? 'unknown',
+        event: content.event ?? 'unknown',
+        payload: content.payload ?? null,
+      });
+    });
+    appendFileSync(logPath, lines.join('\n') + '\n');
+  } catch (err) {
+    log(`appendInboxLog failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 export interface PollLoopConfig {
@@ -142,8 +207,19 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Command handling: the host router gates filtered and unauthorized
     // admin commands before they reach the container. The only command
     // the runner handles directly is /clear (session reset).
+    //
+    // Deshi already-delivered webhooks (kind='webhook' + source='deshi') are
+    // also split out here: the deshi inbound handler writes them to BOTH
+    // outbox (immediate user delivery) AND messages_in (context for the
+    // agent). Without the split, when a real user message wakes the agent,
+    // the pending webhook rides along into the prompt and the agent
+    // re-summarizes / acknowledges what the user already received —
+    // double-delivery (isbtty/deshi#387). Instead, append to inbox.log so
+    // the agent can `Read` it on demand if the user references a past event,
+    // and mark the row completed so it never enters a prompt.
     const normalMessages: MessageInRow[] = [];
     const commandIds: string[] = [];
+    const deliveredWebhooks: MessageInRow[] = [];
 
     for (const msg of messages) {
       if ((msg.kind === 'chat' || msg.kind === 'chat-sdk') && isClearCommand(msg)) {
@@ -161,6 +237,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         commandIds.push(msg.id);
         continue;
       }
+      if (isAlreadyDeliveredDeshiWebhook(msg)) {
+        deliveredWebhooks.push(msg);
+        continue;
+      }
       normalMessages.push(msg);
     }
 
@@ -168,10 +248,20 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       markCompleted(commandIds);
     }
 
+    if (deliveredWebhooks.length > 0) {
+      appendInboxLog(config.cwd, deliveredWebhooks);
+      markCompleted(deliveredWebhooks.map((m) => m.id));
+      log(
+        `Redirected ${deliveredWebhooks.length} deshi webhook(s) to inbox.log (already delivered via outbox)`,
+      );
+    }
+
     if (normalMessages.length === 0) {
-      const remainingIds = ids.filter((id) => !commandIds.includes(id));
+      const remainingIds = ids.filter(
+        (id) => !commandIds.includes(id) && !deliveredWebhooks.some((w) => w.id === id),
+      );
       if (remainingIds.length > 0) markCompleted(remainingIds);
-      log(`All ${messages.length} message(s) were commands, skipping query`);
+      log(`All ${messages.length} message(s) were commands or delivered webhooks, skipping query`);
       continue;
     }
 
@@ -213,7 +303,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
     // Process the query while concurrently polling for new messages
     const skippedSet = new Set(skipped);
-    const processingIds = ids.filter((id) => !commandIds.includes(id) && !skippedSet.has(id));
+    const deliveredWebhookIds = new Set(deliveredWebhooks.map((m) => m.id));
+    const processingIds = ids.filter(
+      (id) => !commandIds.includes(id) && !skippedSet.has(id) && !deliveredWebhookIds.has(id),
+    );
     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
