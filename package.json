@@ -31,7 +31,7 @@
     "@beeper/chat-adapter-matrix": "^0.2.0",
     "@bitbasti/chat-adapter-webex": "^0.1.0",
     "@chat-adapter/discord": "^4.24.0",
-    "@chat-adapter/gchat": "^4.24.0",
+    "@chat-adapter/gchat": "4.26.0",
     "@chat-adapter/github": "^4.24.0",
     "@chat-adapter/linear": "^4.26.0",
     "@chat-adapter/slack": "^4.24.0",

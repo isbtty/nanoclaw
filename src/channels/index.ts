@@ -25,7 +25,7 @@ import './telegram.js';
 import './linear.js';
 
 // google chat
-// import './gchat.js';
+import './gchat.js';
 
 // microsoft teams
 // import './teams.js';
