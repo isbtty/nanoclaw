@@ -41,12 +41,30 @@ interface LineContentProvider {
   previewImageUrl?: string;
 }
 
+interface LineMentionee {
+  index: number;
+  length: number;
+  type?: 'user' | 'all' | string;
+  userId?: string;
+}
+
+interface LineMention {
+  mentionees?: LineMentionee[];
+}
+
 interface LineMessage {
   id: string;
   type: 'text' | 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'location' | string;
   text?: string;
   fileName?: string;
   contentProvider?: LineContentProvider;
+  mention?: LineMention;
+}
+
+interface LineBotInfo {
+  userId?: string;
+  basicId?: string;
+  displayName?: string;
 }
 
 interface LineEvent {
@@ -99,6 +117,30 @@ export function splitForLineLimit(text: string, limit: number = LINE_TEXT_LIMIT)
   return out;
 }
 
+/**
+ * グループ内で bot が mention されたかを判定する。
+ *
+ * 優先度:
+ *   1. event.message.mention.mentionees に `botUserId` 一致 or `type === 'all'` がある (LINE Platform が解析した正式な mention 情報)
+ *   2. text に `assistantName` の regex match がある (mention 機能を使わずに名前打ったとき / mention 情報が来ないとき)
+ *
+ * `botUserId` が未取得 (= /v2/bot/info 失敗等) の場合、優先度 1 の userId 一致は無効化される
+ * (type === 'all' は引き続き有効)。優先度 2 は botUserId に依存しない。
+ */
+export function isBotMentionedInGroup(
+  text: string,
+  mentionees: Array<{ userId?: string; type?: string }> | undefined,
+  botUserId: string | undefined,
+  assistantName: string,
+): boolean {
+  const byMentionee = (mentionees ?? []).some(
+    (m) => m.type === 'all' || (botUserId !== undefined && m.userId === botUserId),
+  );
+  if (byMentionee) return true;
+  if (!text) return false;
+  return new RegExp(`(?:^|\\W)@?${assistantName}(?:$|\\W)`, 'i').test(text);
+}
+
 // --- Adapter factory ---
 
 registerChannelAdapter('line', {
@@ -119,6 +161,7 @@ registerChannelAdapter('line', {
     let setupConfig: ChannelSetup;
     let server: http.Server | undefined;
     let listening = false;
+    let botUserId: string | undefined; // GET /v2/bot/info で取得、グループ mention 判定に使う
     const seenWebhookEventIds = new Set<string>();
     // Bound dedup memory: ~1024 events is plenty given LINE's retry window.
     const DEDUP_MAX = 1024;
@@ -232,6 +275,14 @@ registerChannelAdapter('line', {
     }
 
     async function processEvent(event: LineEvent): Promise<void> {
+      log.debug('LINE event received', {
+        type: event.type,
+        sourceType: event.source.type,
+        hasMessage: !!event.message,
+        messageType: event.message?.type,
+        hasMention: !!event.message?.mention,
+      });
+
       if (rememberWebhookEventId(event.webhookEventId)) {
         log.debug('LINE duplicate webhook event, skipping', { id: event.webhookEventId });
         return;
@@ -291,7 +342,18 @@ registerChannelAdapter('line', {
         text = `[${msg.type}]`;
       }
 
-      const botMentionedInGroup = isGroup && new RegExp(`(?:^|\\W)@?${ASSISTANT_NAME}(?:$|\\W)`, 'i').test(text);
+      const botMentionedInGroup =
+        isGroup && isBotMentionedInGroup(text, msg.mention?.mentionees, botUserId, ASSISTANT_NAME);
+
+      if (isGroup) {
+        log.info('LINE group message', {
+          platformId,
+          text: text.slice(0, 100),
+          mentionees: msg.mention?.mentionees ?? [],
+          botUserId,
+          botMentionedInGroup,
+        });
+      }
 
       const senderUserId = event.source.userId ?? null;
       let senderName: string | undefined;
@@ -362,6 +424,19 @@ registerChannelAdapter('line', {
 
       async setup(hostConfig: ChannelSetup) {
         setupConfig = hostConfig;
+
+        // bot 自身の userId を取得 (グループ内の mention.mentionees 判定で使う)
+        try {
+          const res = await lineFetch<LineBotInfo>('GET', `${LINE_API_BASE}/v2/bot/info`);
+          if (res.ok && res.data?.userId) {
+            botUserId = res.data.userId;
+            log.info('LINE bot info loaded', { botUserId, displayName: res.data.displayName });
+          } else {
+            log.warn('LINE /v2/bot/info failed', { status: res.status });
+          }
+        } catch (err) {
+          log.warn('LINE bot info fetch error', { err });
+        }
 
         server = http.createServer((req, res) => {
           if (req.method === 'GET' && req.url === '/health') {

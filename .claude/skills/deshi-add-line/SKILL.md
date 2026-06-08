@@ -160,6 +160,18 @@ Provider のページで「**Create a Messaging API channel** (Messaging API チ
 
 → user に「完了したか」確認。完了後 §2-d へ。
 
+### c-2. グループ・複数人トーク参加を許可 (グループ運用するなら)
+
+DM だけで運用するなら本ステップは skip 可。**グループ / 複数人トーク内で bot に話しかけたい場合は必須**。
+
+[Official Account Manager](https://manager.line.biz/) → 該当アカウント → **設定 (Settings)** → **アカウント設定 (Account settings)** → **「機能の利用 (Feature usage)」** セクションの **「グループ・複数人トークへの参加 (Group / multi-person chat participation)」** を **オン** にする。
+
+これが OFF だと:
+- bot をグループに招待できない (招待しても入れない or 入っても発言を受け取れない)
+- グループ内のメッセージが webhook に届かない (DM は届くがグループだけ詰まる)
+
+→ user に「完了したか」確認。グループ運用しないなら skip と返答してもらう。完了後 §2-d へ。
+
 ### d. Webhook URL 入力欄の場所だけ確認 (URL 入力は §4 の後)
 
 LINE Developers Console に戻って、該当 channel の **Messaging API settings (Messaging API 設定)** タブを開く。
