@@ -137,6 +137,18 @@ export interface ChatSdkBridgeConfig {
    */
   transformOutboundText?: (text: string) => string;
   /**
+   * Optional fallback to resolve attachment bytes when the adapter could not
+   * provide a usable `fetchData()`. Receives the raw platform file object that
+   * is index-aligned with the corresponding `message.attachments` entry, and
+   * returns the downloaded bytes (plus optional metadata) or null if it cannot
+   * resolve. Needed for Slack, which now ships `file_share` events with
+   * `file_access: "check_file_info"` and no `url_private` (the bytes require a
+   * follow-up `files.info` call authenticated with the bot token).
+   */
+  resolveAttachmentData?: (
+    rawFile: Record<string, unknown>,
+  ) => Promise<{ data: Buffer; name?: string; mimeType?: string } | null>;
+  /**
    * Maximum text length the underlying adapter accepts in a single message.
    * When set, the bridge splits outbound text longer than this on paragraph
    * → line → hard-char boundaries and posts multiple messages. Without this,
@@ -208,8 +220,16 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
 
     // Download attachment data before serialization loses fetchData()
     if (message.attachments && message.attachments.length > 0) {
+      // Raw platform files, index-aligned with message.attachments. Used by the
+      // resolveAttachmentData fallback below when the adapter could not build a
+      // fetchData() (e.g. Slack file_share events with file_access:"check_file_info"
+      // and no url_private — the bytes require a follow-up files.info call).
+      const rawFiles = (message.raw as Record<string, unknown> | undefined)?.files as
+        | Array<Record<string, unknown>>
+        | undefined;
       const enriched = [];
-      for (const att of message.attachments) {
+      for (let i = 0; i < message.attachments.length; i++) {
+        const att = message.attachments[i];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const entry: Record<string, any> = {
           type: att.type,
@@ -225,6 +245,19 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
             entry.data = buffer.toString('base64');
           } catch (err) {
             log.warn('Failed to download attachment', { type: att.type, err });
+          }
+        } else if (config.resolveAttachmentData && rawFiles?.[i]) {
+          // Adapter could not give us bytes — fall back to a platform-specific
+          // resolver that knows how to fetch from the raw file object.
+          try {
+            const resolved = await config.resolveAttachmentData(rawFiles[i]);
+            if (resolved) {
+              entry.data = resolved.data.toString('base64');
+              if (!entry.name && resolved.name) entry.name = resolved.name;
+              if (!entry.mimeType && resolved.mimeType) entry.mimeType = resolved.mimeType;
+            }
+          } catch (err) {
+            log.warn('Fallback attachment resolution failed', { type: att.type, err });
           }
         }
         enriched.push(entry);

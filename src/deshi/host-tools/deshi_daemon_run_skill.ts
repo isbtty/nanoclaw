@@ -18,10 +18,12 @@ interface ChannelContext {
 }
 
 export interface DaemonRunSkillRequest {
-  /** 例: "sync" (NANOCLAW_SKILL_ALLOWLIST に含まれる 5 個のみ daemon 側で許可) */
-  skillName: string;
-  /** 例: "--full" */
-  args?: string;
+  /**
+   * 自由文 input（ADR-0009 deshi_run_start）。ユーザー発話をそのまま、または
+   * skill 名が明確なら "/deshi-<skill> <args>" を渡す。deshi 側 POST /run が
+   * skill 解決 + 非同期実行する（旧 5-skill 限定 allowlist は廃止）。
+   */
+  input: string;
   channelContext: ChannelContext;
 }
 
@@ -33,18 +35,17 @@ export interface DaemonRunSkillResponse {
 
 export async function daemonRunSkillHandler(body: unknown): Promise<DaemonRunSkillResponse> {
   const req = body as DaemonRunSkillRequest;
-  if (!req || typeof req.skillName !== 'string' || !req.channelContext) {
-    throw new Error('daemonRunSkill: skillName and channelContext are required');
+  if (!req || typeof req.input !== 'string' || req.input.trim() === '' || !req.channelContext) {
+    throw new Error('daemonRunSkill: input and channelContext are required');
   }
 
   const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
-  const input = req.args ? `/${req.skillName} ${req.args}` : `/${req.skillName}`;
 
   const res = await fetch(`${deshiUrl}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      input,
+      input: req.input,
       channelContext: req.channelContext,
     }),
   });
