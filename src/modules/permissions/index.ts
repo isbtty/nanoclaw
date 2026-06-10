@@ -468,7 +468,7 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
   }
 
   const isGroup = event.threadId !== null;
-  const engageMode: MessagingGroupAgent['engage_mode'] = isGroup ? 'mention-sticky' : 'pattern';
+  const engageMode: MessagingGroupAgent['engage_mode'] = isGroup ? 'mention' : 'pattern';
   const engagePattern = isGroup ? null : '.';
 
   const mgaId = `mga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -568,7 +568,7 @@ setMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   }
 
   const isGroup = originalEvent.threadId !== null;
-  const engageMode: MessagingGroupAgent['engage_mode'] = isGroup ? 'mention-sticky' : 'pattern';
+  const engageMode: MessagingGroupAgent['engage_mode'] = isGroup ? 'mention' : 'pattern';
   const engagePattern = isGroup ? null : '.';
 
   const mgaId = `mga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
