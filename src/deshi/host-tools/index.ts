@@ -22,6 +22,7 @@ import { daemonListSkillsHandler } from './deshi_daemon_list_skills.js';
 import { daemonSearchFilesHandler } from './deshi_daemon_search_files.js';
 import { daemonGogHandler } from './deshi_daemon_gog.js';
 import { daemonSendFileToChatHandler } from './deshi_daemon_send_file_to_chat.js';
+import { daemonPushFileToRawHandler } from './deshi_daemon_push_file_to_raw.js';
 
 export type HostToolHandler = (body: unknown) => Promise<unknown>;
 
@@ -52,3 +53,9 @@ handlers.deshi_daemon_gog = daemonGogHandler as HostToolHandler;
 // 内部実装は deshi `/files/content` でファイル本体を取って既存の
 // skill-execution-notifications handler を in-process で再利用する。
 handlers.deshi_daemon_send_file_to_chat = daemonSendFileToChatHandler as HostToolHandler;
+// container 内 agent が受け取ったファイル (Telegram 添付等) を deshi daemon
+// `POST /files/upload` (ADR-0008) 経由で raw/inbox または raw/outputs に push
+// する。本 handler は転送のみ。要約・OCR・skill 実行はしない (ADR-0009
+// passthrough policy)。MCP stdio 側で local_path を読んで base64 化したものを
+// 受ける (host-tools-server の 20 MiB body 制限内に収まる必要あり)。
+handlers.deshi_daemon_push_file_to_raw = daemonPushFileToRawHandler as HostToolHandler;

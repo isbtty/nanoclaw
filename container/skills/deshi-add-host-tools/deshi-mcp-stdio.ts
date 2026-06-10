@@ -13,6 +13,8 @@
  *   - daemon_search_files     : deshi-wiki/deshi-raw の hybrid search (qmd 経由)
  *   - daemon_gog              : Google Calendar/Docs/Drive/Gmail を gog CLI 経由で操作
  *   - daemon_send_file_to_chat: deshi-raw/deshi-wiki 配下のファイルを現在のチャットに送る
+ *   - daemon_push_file_to_raw  : container 内のファイル (Telegram 添付等) を
+ *                                deshi-raw の inbox/ または outputs/ に push (ADR-0008)
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
@@ -462,6 +464,107 @@ server.tool(
       };
     }
     return callHostTool('deshi_daemon_send_file_to_chat', { ...args, channelContext });
+  },
+);
+
+// ─────────────────────────────────────────────────────────────
+// daemon_push_file_to_raw
+//   Push a file that lives INSIDE this container (e.g. an inbound Telegram
+//   attachment saved under /tmp) to deshi-raw via `POST /files/upload`
+//   (ADR-0008 / ADR-0009). Mirrors the passthrough policy: nanoclaw does NOT
+//   hold business state, every received file is shipped to deshi immediately
+//   and the local copy is removed by the caller.
+//
+//   Allowed `dest_subpath` prefixes are enforced by deshi daemon:
+//     - inbox/<source>/<YYYY-MM-DD>/<filename>   (= raw inbox staging)
+//     - outputs/<YYYY-MM-DD>-<slug>/<filename>   (= deshi-generated artifacts)
+//
+//   Implementation: read `local_path` inside the container, compute sha256,
+//   base64-encode, and forward via host-tools-server. Host-tools-server's
+//   JSON body limit is 20 MiB, so the effective file-size cap here is ~14 MiB
+//   after base64 overhead. For larger files a multipart pipeline can be
+//   added later (out of scope for the initial push API).
+// ─────────────────────────────────────────────────────────────
+const MAX_PUSH_FILE_BYTES = 14 * 1024 * 1024; // 14 MiB raw → ~18.7 MiB base64
+
+server.tool(
+  'daemon_push_file_to_raw',
+  [
+    'Push a file located inside this container to deshi-raw via the deshi daemon (ADR-0008). Use this for inbound chat attachments (Telegram/LINE PDF / image / voice) and for any artifact the agent must hand off to deshi for further processing. After a successful call, delete the local file — nanoclaw must not retain business state (ADR-0009 passthrough).',
+    '',
+    'Allowed dest_subpath prefixes (enforced by deshi daemon):',
+    '- inbox/<source>/<YYYY-MM-DD>/<filename>  — raw inbox staging for ingest',
+    '- outputs/<YYYY-MM-DD>-<slug>/<filename>  — deshi-generated artifacts',
+    '',
+    `Max raw file size for this call: ${MAX_PUSH_FILE_BYTES} bytes (~14 MiB). Larger files are rejected before transfer.`,
+    '',
+    'Outcome values in the response:',
+    '- created           — first time write succeeded',
+    '- skipped_same_sha  — identical content already at that path (idempotent re-send)',
+    '- renamed_collision — inbox path existed with different content; written as `<name>-<sha8>.<ext>`',
+    '- overwritten       — outputs path replaced because overwrite=true was set',
+    '',
+    'On 409 (outputs/ collision) re-run with overwrite=true if replacement is intended.',
+  ].join('\n'),
+  {
+    local_path: z
+      .string()
+      .describe('Absolute path inside this container (e.g. /tmp/whitepaper.pdf). The file is read here, transferred, and the caller is responsible for deleting the local copy after success.'),
+    dest_subpath: z
+      .string()
+      .describe('Destination relative to deshi-raw (e.g. "inbox/nanoclaw/2026-06-10/whitepaper.pdf").'),
+    source: z
+      .string()
+      .optional()
+      .describe('Source label written to the deshi audit log (e.g. "nanoclaw").'),
+    overwrite: z
+      .boolean()
+      .optional()
+      .describe('Allow overwriting an existing outputs/ artifact. Has no effect for inbox/ (always renamed on collision).'),
+  },
+  async (args) => {
+    const { local_path, dest_subpath, source, overwrite } = args;
+    try {
+      // Lazy import to keep cold-start light; only needed when this tool runs.
+      const { readFile, stat } = await import('node:fs/promises');
+      const { createHash } = await import('node:crypto');
+
+      const st = await stat(local_path);
+      if (!st.isFile()) {
+        return {
+          content: [{ type: 'text' as const, text: `local_path is not a regular file: ${local_path}` }],
+          isError: true,
+        };
+      }
+      if (st.size > MAX_PUSH_FILE_BYTES) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `file ${local_path} is ${st.size} bytes which exceeds the ${MAX_PUSH_FILE_BYTES}-byte limit for this transfer path`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      const buf = await readFile(local_path);
+      const sha256 = createHash('sha256').update(buf).digest('hex');
+      const file_b64 = buf.toString('base64');
+
+      return callHostTool('deshi_daemon_push_file_to_raw', {
+        file_b64,
+        sha256,
+        dest_subpath,
+        ...(source !== undefined ? { source } : {}),
+        ...(overwrite !== undefined ? { overwrite } : {}),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: `Failed to push ${local_path}: ${message}` }],
+        isError: true,
+      };
+    }
   },
 );
 
