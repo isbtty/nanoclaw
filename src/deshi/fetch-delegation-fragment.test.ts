@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { readEnvFile } from '../env.js';
 import { fetchDeshiDelegationFragment } from './fetch-delegation-fragment.js';
+
+// readEnvFile reads the real `.env` from process.cwd(); mock it so tests drive
+// the `.env` fallback deterministically (default: empty, so process.env wins).
+vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
+const readEnvFileMock = vi.mocked(readEnvFile);
 
 describe('fetchDeshiDelegationFragment', () => {
   const originalFetch = globalThis.fetch;
@@ -8,6 +14,7 @@ describe('fetchDeshiDelegationFragment', () => {
   const originalSecret = process.env.DESHI_DAEMON_DEVICE_SECRET;
 
   beforeEach(() => {
+    readEnvFileMock.mockReturnValue({});
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
   });
@@ -59,6 +66,49 @@ describe('fetchDeshiDelegationFragment', () => {
 
   it('DESHI_DAEMON_DEVICE_SECRET が未設定なら throw する', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
+    await expect(fetchDeshiDelegationFragment()).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
+  });
+
+  it('process.env に secret が無くても .env fallback から拾う (launchd plist に env が無いケース)', async () => {
+    delete process.env.DESHI_DAEMON_DEVICE_SECRET;
+    delete process.env.DESHI_DAEMON_URL;
+    readEnvFileMock.mockReturnValue({
+      DESHI_DAEMON_URL: 'http://localhost:3100',
+      DESHI_DAEMON_DEVICE_SECRET: 'from-dotenv',
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => 'body',
+    } as unknown as Response);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await fetchDeshiDelegationFragment();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:3100/nanoclaw-fragment');
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer from-dotenv:nanoclaw');
+  });
+
+  it('process.env が .env fallback より優先される', async () => {
+    process.env.DESHI_DAEMON_DEVICE_SECRET = 'from-process-env';
+    readEnvFileMock.mockReturnValue({ DESHI_DAEMON_DEVICE_SECRET: 'from-dotenv' });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => 'body',
+    } as unknown as Response);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await fetchDeshiDelegationFragment();
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer from-process-env:nanoclaw');
+  });
+
+  it('secret が process.env にも .env にも無ければ throw する', async () => {
+    delete process.env.DESHI_DAEMON_DEVICE_SECRET;
+    readEnvFileMock.mockReturnValue({});
     await expect(fetchDeshiDelegationFragment()).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
   });
 

@@ -60,3 +60,30 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 （添付ファイルの取り込み・配送は `daemon_push_file_to_raw` / `daemon_send_file_to_chat` を使う。詳細は `.claude-fragments/mcp-deshi.md`。）
 
 <!-- END deshi: host-tools MCP -->
+
+<!-- BEGIN deshi: inbox.log contract -->
+
+## `.deshi/inbox.log` — 配信済み event の履歴ログ
+
+`/workspace/agent/.deshi/inbox.log` (JSON Lines) には、 deshi daemon がバックグラウンドで実行した heartbeat task (morning-briefing / sync / meeting-prep 等) の **配信済み記録** が時系列で追記される。
+
+各 line は 1 つの skill 実行結果通知に対応 :
+
+```jsonl
+{"ts":"2026-06-08T00:37:51.000Z","id":"deshi-inbound-...","source":"deshi","event":"skill-execution-result","payload":{"text":"...","files":["briefing.html"]}}
+```
+
+### 重要な性質
+
+- ユーザーは payload の内容を **outbox 経由で既に受け取っている** ため、 agent が再度 chat に流す必要は無い
+- このログは **agent prompt には決して出てこない** (poll-loop が deshi 源泉 webhook を prompt から除外して直接ここに append している)
+- 代わりにユーザーが過去の delivery を参照したとき agent が `Read` で参照する
+
+### 取り扱いルール
+
+- ❌ 「届きました」「今朝のブリーフィングは...」のような **自発的 acknowledge / 復唱はしない** (ユーザーが頼んでもいないのに inbox.log を summary しに行かない)
+- ❌ 朝 / 夕方 / 毎日のような定期 schedule で勝手に Read しに行かない (token と attention の無駄)
+- ✅ **ユーザーの現在の発言が過去 event を明示的に参照** したとき (例: 「さっきの briefing の X について」「今朝届いた sync 結果に何が入ってた?」) に限り、 `Read /workspace/agent/.deshi/inbox.log` で当該 event を確認して context として使う
+- ✅ grep / tail を使って効率的に該当行を絞り込んで読む
+
+<!-- END deshi: inbox.log contract -->

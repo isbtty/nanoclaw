@@ -82,6 +82,12 @@ export async function daemonSendFileToChatHandler(body: unknown): Promise<Daemon
     extension?: string;
     encoding?: 'utf-8' | 'base64';
     content?: string;
+    /**
+     * deshi daemon は `.md` / `.markdown` リクエストに対して DOU brand HTML を
+     * 同梱で返す。旧 TelegramNotifier (deleted in deshi#295) の md→html 自動
+     * 変換と同じ振る舞いを継続するため、こちらでも受け取って HTML に差し替える。
+     */
+    renderedHtml?: string;
   };
   if (
     typeof fileData.name !== 'string' ||
@@ -93,10 +99,29 @@ export async function daemonSendFileToChatHandler(body: unknown): Promise<Daemon
 
   // 2. base64 に正規化。daemon が text モードで返した場合 (`encoding: 'utf-8'`)
   //    は Buffer.from(...).toString('base64') で encode し直す。
-  const contentBase64 =
-    fileData.encoding === 'base64' ? fileData.content : Buffer.from(fileData.content, 'utf-8').toString('base64');
+  //
+  //    `.md` / `.markdown` は `renderedHtml` を優先する。Telegram は document
+  //    preview で .md を扱えず iPhone でも文字化けする一方、.html は document
+  //    preview がブラウザレンダリングしてくれる。旧 TelegramNotifier.sendDocument
+  //    の convertMdToHtml と同じ振る舞い (deshi#179, #309)。
+  // deshi daemon の `/files/content` は extension を leading dot 抜きで返す
+  // (daemon/src/routes/files.ts:446 `extension: ext.slice(1)`)。historical な
+  // 揺れに保険をかけて両形式を許容する。
+  const sourceExt = (fileData.extension ?? '').toLowerCase().replace(/^\./, '');
+  const isMarkdown = sourceExt === 'md' || sourceExt === 'markdown';
+  const useRenderedHtml = isMarkdown && typeof fileData.renderedHtml === 'string' && fileData.renderedHtml.length > 0;
 
-  const filename = req.filename ?? fileData.name;
+  const contentBase64 = useRenderedHtml
+    ? Buffer.from(fileData.renderedHtml as string, 'utf-8').toString('base64')
+    : fileData.encoding === 'base64'
+      ? fileData.content
+      : Buffer.from(fileData.content, 'utf-8').toString('base64');
+
+  // 元 filename の拡張子を .html に差し替える (req.filename / fileData.name の
+  // どちらでも一貫して扱う)。.md / .markdown 以外の拡張子をユーザが明示した
+  // 場合はそれを尊重する (= sourceExt で判定済なのでここまで来ない)。
+  const baseFilename = req.filename ?? fileData.name;
+  const filename = useRenderedHtml ? baseFilename.replace(/\.(md|markdown)$/i, '.html') : baseFilename;
 
   // 3. 既存の skillExecutionNotificationsHandler を再利用。in-process 呼出なので
   //    HTTP / auth 往復は不要。Telegram への配信は host の delivery polling が

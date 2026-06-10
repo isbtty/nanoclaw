@@ -170,14 +170,26 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
   //    initial 通知でも動作するように)。
   const { session } = resolveSession(agent.agent_group_id, mg.id, req.threadId ?? null, effectiveSessionMode);
 
-  // 5. attachment 書き込み (`outbox/<message_id>/<filename>`)
-  //    message_id は upstream の `isSafeAttachmentName` を通る形式 (basename
-  //    安全) で生成する。crypto.randomUUID() は `-` のみで構成されるため OK。
-  const messageId = `deshi-inbound-${randomUUID()}`;
-  const filenames =
-    req.files && req.files.length > 0 ? writeOutboxFiles(agent.agent_group_id, session.id, messageId, req.files) : [];
-
-  // 6. messages_out への INSERT — Telegram 等への即時配信用 (ADR-0011 パターン A)
+  // 5-6. attachment 書き込み + messages_out への INSERT (ADR-0011 パターン A)
+  //
+  // Telegram 等の chat adapter (`@chat-adapter/telegram`) は 1 message = 1 file
+  // 制限があり、 N>1 files を 1 row に詰めると ValidationError で配信
+  // 失敗する。そのため N file payload は **N rows × 1 file each** に
+  // split する。 row 0 が `req.message` 本文 + 1 file、 row 1..N-1 は
+  // file-only。multi-file ネイティブ対応の adapter (Discord 等) は messages
+  // が増える程度の degradation で済む。
+  //
+  // outbox dir layout:
+  //   outbox/<base>/<file0>      ← row 0 (本文 text + file0)
+  //   outbox/<base>-1/<file1>    ← row 1 (file-only)
+  //   outbox/<base>-(N-1)/<fileN-1>
+  //
+  // ファイル無し (0 files) → row 0 1 個に text のみ (legacy 動作維持)。
+  // ファイル 1 個      → row 0 1 個に text + file (legacy 動作維持、 outbox = `<base>`)。
+  //
+  // messages_in (step 7) 側は 1 logical event として 1 row に集約する
+  // (split しない) — agent context には「1 つの skill 実行で N ファイルが
+  // 返った」として乗せたいため。
   //
   // content schema は container 側の send_file / send_message と同じ
   // `{ text, files: string[] }` JSON を採用 (upstream
@@ -195,19 +207,36 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
   //   実装上のバグ (upstream 由来) で、本 inbound handler では writable
   //   ハンドルで直接書き込む。upstream 修正は本 PR スコープ外。
   //   修正されたら本ブロックを `writeOutboundDirect` 呼び出しに戻して良い。
-  writeOutboundMessage({
-    agentGroupId: agent.agent_group_id,
-    sessionId: session.id,
-    id: messageId,
-    kind: 'chat',
-    platformId: mg.platform_id,
-    channelType: mg.channel_type,
-    threadId: req.threadId ?? session.thread_id ?? null,
-    content: JSON.stringify({
-      text: req.message,
-      files: filenames,
-    }),
-  });
+  //
+  // message_id は upstream の `isSafeAttachmentName` を通る形式 (basename
+  // 安全) で生成する。crypto.randomUUID() は `-` のみで構成されるため OK。
+  const messageId = `deshi-inbound-${randomUUID()}`;
+  const incomingFiles = req.files ?? [];
+  const rowCount = Math.max(1, incomingFiles.length);
+  const allFilenames: string[] = [];
+
+  for (let i = 0; i < rowCount; i++) {
+    const isFirst = i === 0;
+    const rowId = isFirst ? messageId : `${messageId}-${i}`;
+    const rowIncoming = i < incomingFiles.length ? [incomingFiles[i]!] : [];
+    const rowFilenames =
+      rowIncoming.length > 0 ? writeOutboxFiles(agent.agent_group_id, session.id, rowId, rowIncoming) : [];
+    allFilenames.push(...rowFilenames);
+
+    writeOutboundMessage({
+      agentGroupId: agent.agent_group_id,
+      sessionId: session.id,
+      id: rowId,
+      kind: 'chat',
+      platformId: mg.platform_id,
+      channelType: mg.channel_type,
+      threadId: req.threadId ?? session.thread_id ?? null,
+      content: JSON.stringify({
+        text: isFirst ? req.message : '',
+        files: rowFilenames,
+      }),
+    });
+  }
 
   // 7. messages_in への INSERT — agent への context 注入 (ADR-0011 パターン A)
   //
@@ -255,7 +284,7 @@ export async function skillExecutionNotificationsHandler(body: unknown): Promise
       event: 'skill-execution-result',
       payload: {
         text: req.message,
-        files: filenames,
+        files: allFilenames,
       },
       attachments:
         req.files?.map((f) => ({

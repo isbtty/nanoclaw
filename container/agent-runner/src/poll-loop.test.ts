@@ -4,7 +4,11 @@ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '
 import { getPendingMessages, markCompleted } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { formatMessages, extractRouting } from './formatter.js';
-import { isCorruptionError } from './poll-loop.js';
+import { isCorruptionError, isAlreadyDeliveredDeshiWebhook, appendInboxLog } from './poll-loop.js';
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import type { MessageInRow } from './db/messages-in.js';
 import { MockProvider } from './providers/mock.js';
 
 beforeEach(() => {
@@ -393,5 +397,112 @@ describe('isCorruptionError', () => {
     expect(isCorruptionError('database is locked')).toBe(false);
     expect(isCorruptionError('no such table: messages_in')).toBe(false);
     expect(isCorruptionError('')).toBe(false);
+  });
+});
+
+/**
+ * Build a row that looks like what `getPendingMessages` would return for a
+ * given kind + content. Only the fields the helpers read are populated.
+ */
+function makeRow(id: string, kind: string, content: unknown, opts?: { timestamp?: string }): MessageInRow {
+  return {
+    id,
+    kind: kind as MessageInRow['kind'],
+    timestamp: opts?.timestamp ?? '2026-06-08T00:37:51.000Z',
+    status: 'pending',
+    process_after: null,
+    trigger: 0,
+    on_wake: 0,
+    content: typeof content === 'string' ? content : JSON.stringify(content),
+  } as MessageInRow;
+}
+
+describe('isAlreadyDeliveredDeshiWebhook', () => {
+  it('returns true for deshi-source webhook (already delivered via outbox)', () => {
+    const row = makeRow('m1', 'webhook', { source: 'deshi', event: 'skill-execution-result', payload: { text: 'briefing' } });
+    expect(isAlreadyDeliveredDeshiWebhook(row)).toBe(true);
+  });
+
+  it('returns false for github webhook (upstream — agent IS expected to react)', () => {
+    const row = makeRow('m1', 'webhook', { source: 'github', event: 'push', payload: { ref: 'main' } });
+    expect(isAlreadyDeliveredDeshiWebhook(row)).toBe(false);
+  });
+
+  it('returns false for chat message even with source=deshi in payload', () => {
+    const row = makeRow('m1', 'chat', { source: 'deshi', text: 'hi' });
+    expect(isAlreadyDeliveredDeshiWebhook(row)).toBe(false);
+  });
+
+  it('returns false for webhook with no source field', () => {
+    const row = makeRow('m1', 'webhook', { event: 'push', payload: {} });
+    expect(isAlreadyDeliveredDeshiWebhook(row)).toBe(false);
+  });
+
+  it('returns false for unparseable content (safe-default: stays in prompt)', () => {
+    const row = makeRow('m1', 'webhook', 'not-json-{');
+    expect(isAlreadyDeliveredDeshiWebhook(row)).toBe(false);
+  });
+});
+
+describe('appendInboxLog', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'inbox-log-test-'));
+  });
+
+  afterEach(() => {
+    if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('writes one JSONL row per webhook with parsed source/event/payload', () => {
+    const rows = [
+      makeRow('m1', 'webhook', { source: 'deshi', event: 'skill-execution-result', payload: { text: 'a' } }),
+      makeRow('m2', 'webhook', { source: 'deshi', event: 'skill-execution-result', payload: { text: 'b' } }, { timestamp: '2026-06-08T00:38:00.000Z' }),
+    ];
+    appendInboxLog(tmp, rows);
+    const log = readFileSync(join(tmp, '.deshi', 'inbox.log'), 'utf8');
+    const lines = log.trim().split('\n');
+    expect(lines).toHaveLength(2);
+    const a = JSON.parse(lines[0]!);
+    expect(a).toEqual({
+      ts: '2026-06-08T00:37:51.000Z',
+      id: 'm1',
+      source: 'deshi',
+      event: 'skill-execution-result',
+      payload: { text: 'a' },
+    });
+    const b = JSON.parse(lines[1]!);
+    expect(b.id).toBe('m2');
+    expect(b.ts).toBe('2026-06-08T00:38:00.000Z');
+  });
+
+  it('creates parent .deshi directory if missing', () => {
+    expect(existsSync(join(tmp, '.deshi'))).toBe(false);
+    appendInboxLog(tmp, [makeRow('m1', 'webhook', { source: 'deshi', event: 'x', payload: 1 })]);
+    expect(existsSync(join(tmp, '.deshi', 'inbox.log'))).toBe(true);
+  });
+
+  it('appends (does not overwrite) on subsequent calls', () => {
+    appendInboxLog(tmp, [makeRow('m1', 'webhook', { source: 'deshi', event: 'x', payload: 1 })]);
+    appendInboxLog(tmp, [makeRow('m2', 'webhook', { source: 'deshi', event: 'y', payload: 2 })]);
+    const log = readFileSync(join(tmp, '.deshi', 'inbox.log'), 'utf8');
+    expect(log.trim().split('\n')).toHaveLength(2);
+  });
+
+  it('records unparseable content with _unparseable marker (data not lost)', () => {
+    appendInboxLog(tmp, [makeRow('m1', 'webhook', 'totally-not-json{')]);
+    const log = readFileSync(join(tmp, '.deshi', 'inbox.log'), 'utf8');
+    const row = JSON.parse(log.trim());
+    expect(row).toEqual({
+      ts: '2026-06-08T00:37:51.000Z',
+      id: 'm1',
+      _unparseable: true,
+    });
+  });
+
+  it('no-op for empty input (no file created)', () => {
+    appendInboxLog(tmp, []);
+    expect(existsSync(join(tmp, '.deshi'))).toBe(false);
   });
 });

@@ -17,6 +17,7 @@ import path from 'path';
 import { deriveAttachmentName } from './attachment-naming.js';
 import { isSafeAttachmentName } from './attachment-safety.js';
 import type { OutboundFile } from './channels/adapter.js';
+import { isMarkdownAttachment, renderMarkdownToHtml } from './md-to-html.js';
 import { DATA_DIR } from './config.js';
 import { getMessagingGroup } from './db/messaging-groups.js';
 import {
@@ -487,7 +488,18 @@ export function readOutboxFiles(
         log.warn('Rejecting outbox file outside message directory', { messageId, filename });
         continue;
       }
-      files.push({ filename, data: fs.readFileSync(realFilePath) });
+      const data = fs.readFileSync(realFilePath);
+      // Markdown attachments preview as mojibake on chat clients that guess the
+      // charset of a BOM-less UTF-8 file (CJK content is the common trigger).
+      // Render to a self-contained UTF-8 HTML document so the preview is both
+      // correct and nicely formatted; non-markdown files pass through untouched.
+      if (isMarkdownAttachment(filename)) {
+        const title = path.basename(filename, path.extname(filename));
+        const html = renderMarkdownToHtml(data.toString('utf-8'), title);
+        files.push({ filename: `${title}.html`, data: Buffer.from(html, 'utf-8') });
+      } else {
+        files.push({ filename, data });
+      }
     } catch {
       log.warn('Outbox file not found', { messageId, filename });
     }

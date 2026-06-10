@@ -71,10 +71,12 @@ isbtty/nanoclaw/
     │   ├── overview.md                  ← このファイル
     │   ├── design.md                    ← 詳細設計
     │   ├── mcp-tool-naming.md           ← MCP tool 命名規則
-    │   └── merge-driver-setup.md        ← merge driver 登録手順
+    │   ├── merge-driver-setup.md        ← merge driver 登録手順
+    │   └── launchd-env-injection.md     ← 初回 setup 後の plist env 注入手順
     └── scripts/
         ├── install-official-channels.sh
         ├── merge-barrel.sh              ← git custom merge driver
+        ├── inject-launchd-env.sh        ← launchd plist に DESHI_DAEMON_* を inject
         └── verify-layout.ts             ← CI 必須 (未実装)
 ```
 
