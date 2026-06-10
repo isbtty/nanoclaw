@@ -203,50 +203,8 @@ server.tool(
   async () => callHostTool('health', {}),
 );
 
-// ─────────────────────────────────────────────────────────────
-// daemon_list_skills / daemon_refresh_skills
-//   両者は HTTP 層では同じ handler (deshi_daemon_list_skills) を共有する。
-//   agent には 2 つの tool として見せ、意味付けで使い分けてもらう:
-//     - list   : 起動時に現在の expose-to-nanoclaw skill を discover
-//     - refresh: 実行中に skill が増えた可能性を疑った時に re-fetch
-// ─────────────────────────────────────────────────────────────
-server.tool(
-  'daemon_list_skills',
-  'List the deshi skills currently exposed to nanoclaw (SKILL.md `expose-to-nanoclaw: true`). Returns `{schemaVersion, skills: [{name, description, argumentHint?}]}`. Useful at the start of a session to learn what `daemon_run_skill` will accept.',
-  {},
-  async () => callHostTool('deshi_daemon_list_skills', {}),
-);
-
-server.tool(
-  'daemon_refresh_skills',
-  'Re-fetch the list of deshi skills exposed to nanoclaw. Use this when the user requests a skill that was not in the startup list — a customer fork may have added new skills after the session started. Returns the same shape as `daemon_list_skills`.',
-  {},
-  async () => callHostTool('deshi_daemon_refresh_skills', {}),
-);
-
-// ─────────────────────────────────────────────────────────────
-// daemon_search_files
-//   Hybrid (semantic + lexical) search over deshi-wiki / deshi-raw via the
-//   `qmd` CLI on the host. Direct primitive — does NOT spawn a skill, so it
-//   is cheap enough for the agent to call multiple times in one turn while
-//   triangulating where information lives ("did we already write about X?",
-//   "find any past meetings with Y").
-// ─────────────────────────────────────────────────────────────
-server.tool(
-  'daemon_search_files',
-  'Search deshi-wiki / deshi-raw using hybrid (semantic + lexical) ranking. Returns `{schemaVersion?, query, results: [{path, name, score, snippet}], totalCount, indexedAt}`. Use this for ad-hoc lookups across the user\'s knowledge base — cheaper than calling a skill since it goes directly to the daemon. Examples: find prior writeups by topic, locate the meeting note with someone, see whether a concept already has a wiki entry.',
-  {
-    query: z.string().describe('Search query (Japanese OK, non-empty)'),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .optional()
-      .describe('Maximum results to return (default 20, range 1-100)'),
-  },
-  async (args) => callHostTool('deshi_daemon_search_files', args),
-);
+// daemon_list_skills / daemon_refresh_skills / daemon_search_files は削除 (ADR-0009 passthrough)。
+// skill 解決も wiki/raw 検索も deshi 側 (deshi_run_start) に委譲する。nanoclaw は持たない。
 
 // ─────────────────────────────────────────────────────────────
 // session_routing reader — agent の代わりに channelContext を組み立てる
@@ -308,22 +266,13 @@ function readSessionRouting(): ChannelContext {
 //   daemon 側 SkillRegistry に委譲する。
 //   channelContext は agent からは受け取らず、`session_routing` から自動注入。
 // ─────────────────────────────────────────────────────────────
-const startupSkills = await fetchSkillsAtStartup();
-const runSkillDescription = buildRunSkillDescription(startupSkills);
-
 server.tool(
-  'daemon_run_skill',
-  runSkillDescription,
+  'deshi_run_start',
+  'deshi に処理を委譲する唯一の dispatch 窓口。ユーザー発話・質問・相談・依頼を、内容を問わず input にそのまま渡す（skill 名が明確なら "/deshi-<skill> <args>" も可）。deshi 側で skill 解決して非同期実行し jobId を返す。結果は deshi_run_poll で取得する。nanoclaw は自分で答えたり Google/検索を直接行ったりしない — すべてここに流す。',
   {
-    skillName: z
+    input: z
       .string()
-      .describe(
-        'Skill name (e.g. "sync"). Must be one of the skills returned by `daemon_list_skills` / `daemon_refresh_skills` — submitting a non-exposed skill fails at the daemon.',
-      ),
-    args: z
-      .string()
-      .optional()
-      .describe('Optional arguments string appended after the skill name (e.g. "--full")'),
+      .describe('ユーザー発話そのまま、または "/deshi-<skill> <args>"。非空。'),
   },
   async (args) => {
     let channelContext: ChannelContext;
@@ -351,10 +300,10 @@ server.tool(
 //   completed/failed の最終状態を受け取れる。retry ループは書かなくて良い。
 // ─────────────────────────────────────────────────────────────
 server.tool(
-  'daemon_poll_until_done',
-  'Wait for a job submitted via daemon_run_skill to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion).',
+  'deshi_run_poll',
+  'Wait for a job submitted via deshi_run_start to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion).',
   {
-    jobId: z.string().describe('jobId returned by daemon_run_skill'),
+    jobId: z.string().describe('jobId returned by deshi_run_start'),
     timeoutMs: z
       .number()
       .int()
@@ -365,54 +314,7 @@ server.tool(
   async (args) => callHostTool('deshi_daemon_poll_until_done', args),
 );
 
-// ─────────────────────────────────────────────────────────────
-// daemon_gog
-//   Run a whitelisted gog CLI subcommand (Calendar / Docs / Drive / Gmail-read
-//   / auth-status) via deshi daemon POST /gog. Direct primitive — no skill
-//   spawn, no secondary Claude session. Use when the user wants to:
-//     - check / create / update calendar events
-//     - create / write Google Docs
-//     - search / share / list Drive files
-//     - read Gmail (list / search / get)
-//   Destructive operations (delete / send / login / logout) are blocked
-//   server-side and will return an error if requested — direct the user to
-//   the CLI instead.
-// ─────────────────────────────────────────────────────────────
-server.tool(
-  'daemon_gog',
-  [
-    'Run a `gog` CLI subcommand on the host to operate Google services. Subcommand path is dot-separated (e.g. "calendar.events", "docs.create", "gmail.messages.list"). Pass any additional CLI args as a string array — each element is one argv item.',
-    '',
-    'Allowed subcommands (server-enforced whitelist):',
-    '- calendar.events / calendar.event / calendar.calendars / calendar.acl (read)',
-    '- calendar.create / calendar.update (non-destructive write)',
-    '- docs.create / docs.write / docs.info / docs.export',
-    '- drive.ls / drive.search / drive.share / drive.download / drive.upload',
-    '- gmail.messages.list / gmail.messages.get / gmail.messages.search / gmail.labels.list / gmail.threads.list / gmail.threads.get',
-    '- auth.status / auth.list',
-    '',
-    'Blocked (will return 403): any delete / remove, gmail.send, auth.add, auth.remove. The daemon also injects `-a <account>` so caller-supplied `-a` / `--account` / `--client` / `--enable-commands` args are rejected.',
-    '',
-    'Returns `{ok, subcommand, stdout, stderr, exitCode}`. The agent should choose the appropriate `--plain` / `--json` flag in `args` to control output format.',
-  ].join('\n'),
-  {
-    subcommand: z
-      .string()
-      .describe('Dot-separated subcommand path (e.g. "calendar.events")'),
-    args: z
-      .array(z.string())
-      .optional()
-      .describe('Additional CLI args, one element per argv item (e.g. ["--days", "1", "--plain"])'),
-    timeout: z
-      .number()
-      .int()
-      .min(1000)
-      .max(5 * 60_000)
-      .optional()
-      .describe('Subprocess timeout in ms (default 30000, max 300000)'),
-  },
-  async (args) => callHostTool('deshi_daemon_gog', args),
-);
+// daemon_gog は削除 (ADR-0009 passthrough)。Google 操作は deshi_run_start に委譲する。
 
 // ─────────────────────────────────────────────────────────────
 // daemon_send_file_to_chat

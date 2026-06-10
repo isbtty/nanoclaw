@@ -22,54 +22,41 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 
 <!-- BEGIN deshi: host-tools MCP -->
 
-## deshi skill の実行 (host-tools MCP 経由)
+## deshi への委譲 (host-tools MCP 経由)
 
-`deshi-add-host-tools` skill が agent group に配線されている場合、`mcp__deshi__*` namespace 経由で host 側の deshi daemon に skill 実行を依頼できる。詳細な命名規則は `.deshi/docs/mcp-tool-naming.md` / `.deshi/adr/0009-mcp-tool-naming.md`。
+`deshi-add-host-tools` skill が配線されている場合、`mcp__deshi__*` 経由で deshi に委譲する。
+**nanoclaw は検閲・配送・中継のみ**。ユーザーの依頼・質問・相談・意見要求は、内容を問わず deshi に流す（ADR-0009 passthrough。詳細は `.claude-fragments/mcp-deshi.md`）。判断・業務・ナレッジ参照・Google 操作はすべて deshi 側で行う。nanoclaw に skill allowlist や業務 primitive は持たせない。
 
-### 使える skill (5 個のみ)
+### dispatch (`deshi_run_start` → `deshi_run_poll`)
 
-deshi daemon 側で `NANOCLAW_SKILL_ALLOWLIST` に絞られている。これ以外は呼んでも failed が返る。
+何らかのユーザー依頼があったら、以下で進める。途中で自前の retry ループを書かないこと。
 
-| skillName | 意味 |
-|---|---|
-| `sync` | 外部データソースから raw データを取り込む (Slack / Gmail / Granola / Apple Notes 等の最新を pull) |
-| `ingest` | raw データを wiki (蒸留済みナレッジ) に反映する |
-| `ingest-business-cards` | 名刺画像を ingest して人物カードに反映 |
-| `ingest-diary` | 日報を ingest |
-| `ingest-kindle` | Kindle ハイライトを ingest |
-
-### 実行パターン (2 step)
-
-skill 実行が必要なユーザー依頼があったら、以下の 2 step で進める。途中で自前の retry ループを書かないこと (`daemon_poll_until_done` が host 側で完結する)。
-
-1. `mcp__deshi__daemon_run_skill` を呼ぶ
+1. `mcp__deshi__deshi_run_start` を呼ぶ
    - 引数:
-     - `skillName`: 上記 5 個のいずれか
-     - `args`: 必要に応じてコマンドライン引数文字列 (例: `"--full"`)
-   - **channelContext は渡さない**: container 側で session_routing から自動注入する (https://github.com/isbtty/deshi/issues/267)。agent は channel / platformId / threadId を fabricate しないこと。
+     - `input`: **ユーザー発話をそのまま**渡す（skill 名が明確なら `"/deshi-<skill> <args>"` でもよい）。skill 解決は deshi 側が行う。
+   - **channelContext は渡さない**: container が session_routing から自動注入する。channel/platformId/threadId を fabricate しないこと。
    - 戻り値: `{ ok: true, jobId, threadId }`
-2. ユーザーに **即時返答** する: 「`<skillName>` を実行開始しました」程度の短い中間メッセージ。skill 実行は数十秒〜数分かかるため、無音にしない
-3. `mcp__deshi__daemon_poll_until_done` を **1 回だけ** 呼ぶ
-   - 引数:
-     - `jobId`: 上の戻り値の jobId
-     - `timeoutMs`: 通常省略 (default 30 分)
-   - 戻り値: `{ status, result?, error?, daemonRestarted?, timedOut?, pollCount, ... }`
+2. ユーザーに **即時返答**: 「確認しています」程度の短い中間メッセージ（数十秒〜数分かかるため無音にしない）
+3. `mcp__deshi__deshi_run_poll` を **1 回だけ** 呼ぶ
+   - 引数: `jobId`（上の戻り値）/ `timeoutMs`（通常省略、default 30 分）
+   - 戻り値: `{ status, result?, error?, daemonRestarted?, timedOut?, ... }`
 
 ### 結果の分岐
 
-`daemon_poll_until_done` の戻り値で:
-
-- `status === "completed"` → `result` を整形してユーザーに最終応答
+- `status === "completed"` → `result` を整形して最終応答
 - `status === "failed"` →
-  - `daemonRestarted === true` のとき: 「deshi daemon が再起動したため処理が中断されました。再実行しますか?」と提案
-  - そうでない: `error` をユーザーに伝える (例: 「nanoclaw 経由では実行できないコマンドです: /xxx」)
-- `timedOut === true` → 「skill が timeout しました (30 分超過)。後で結果を確認します」と応答
+  - `daemonRestarted === true`: 「deshi daemon が再起動したため中断されました。再実行しますか?」と提案
+  - そうでない: `error` をユーザーに伝える
+- `timedOut === true` → 「timeout しました (30 分超過)。後で結果を確認します」と応答
 
 ### やってはいけないこと
 
-- 5 個以外の `skillName` を渡す: `z.enum` で schema validation で弾かれる、すり抜けても daemon 側で failed
-- `daemon_run_skill` を呼ばずに `daemon_poll_until_done` を呼ぶ: jobId がないのでエラー
-- `daemon_poll_until_done` を自前で retry ループする: handler 側で long polling 済み、retry すると無駄な負荷
-- `channelContext` を引数で渡そうとする: schema にもう存在しない。container が session_routing から自動注入する
+- **自分の知識で答える / 「知らない・情報が無い」と返す** → 必ず `deshi_run_start` に流す（検索・判断は deshi の責務）
+- **Google 操作・wiki/ファイル検索を nanoclaw で直接やろうとする** → そのツールは存在しない。すべて `deshi_run_start`
+- `deshi_run_start` を呼ばずに `deshi_run_poll`: jobId が無くエラー
+- `deshi_run_poll` を自前で retry ループ: host 側で long polling 済み
+- `channelContext` を引数で渡す: schema に存在しない。自動注入される
+
+（添付ファイルの取り込み・配送は `daemon_push_file_to_raw` / `daemon_send_file_to_chat` を使う。詳細は `.claude-fragments/mcp-deshi.md`。）
 
 <!-- END deshi: host-tools MCP -->
