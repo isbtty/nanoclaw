@@ -13,6 +13,8 @@
  *   - daemon_search_files     : deshi-wiki/deshi-raw の hybrid search (qmd 経由)
  *   - daemon_gog              : Google Calendar/Docs/Drive/Gmail を gog CLI 経由で操作
  *   - daemon_send_file_to_chat: deshi-raw/deshi-wiki 配下のファイルを現在のチャットに送る
+ *   - daemon_push_file_to_raw  : container 内のファイル (Telegram 添付等) を
+ *                                deshi-raw の inbox/ または outputs/ に push (ADR-0008)
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
@@ -201,50 +203,8 @@ server.tool(
   async () => callHostTool('health', {}),
 );
 
-// ─────────────────────────────────────────────────────────────
-// daemon_list_skills / daemon_refresh_skills
-//   両者は HTTP 層では同じ handler (deshi_daemon_list_skills) を共有する。
-//   agent には 2 つの tool として見せ、意味付けで使い分けてもらう:
-//     - list   : 起動時に現在の expose-to-nanoclaw skill を discover
-//     - refresh: 実行中に skill が増えた可能性を疑った時に re-fetch
-// ─────────────────────────────────────────────────────────────
-server.tool(
-  'daemon_list_skills',
-  'List the deshi skills currently exposed to nanoclaw (SKILL.md `expose-to-nanoclaw: true`). Returns `{schemaVersion, skills: [{name, description, argumentHint?}]}`. Useful at the start of a session to learn what `daemon_run_skill` will accept.',
-  {},
-  async () => callHostTool('deshi_daemon_list_skills', {}),
-);
-
-server.tool(
-  'daemon_refresh_skills',
-  'Re-fetch the list of deshi skills exposed to nanoclaw. Use this when the user requests a skill that was not in the startup list — a customer fork may have added new skills after the session started. Returns the same shape as `daemon_list_skills`.',
-  {},
-  async () => callHostTool('deshi_daemon_refresh_skills', {}),
-);
-
-// ─────────────────────────────────────────────────────────────
-// daemon_search_files
-//   Hybrid (semantic + lexical) search over deshi-wiki / deshi-raw via the
-//   `qmd` CLI on the host. Direct primitive — does NOT spawn a skill, so it
-//   is cheap enough for the agent to call multiple times in one turn while
-//   triangulating where information lives ("did we already write about X?",
-//   "find any past meetings with Y").
-// ─────────────────────────────────────────────────────────────
-server.tool(
-  'daemon_search_files',
-  'Search deshi-wiki / deshi-raw using hybrid (semantic + lexical) ranking. Returns `{schemaVersion?, query, results: [{path, name, score, snippet}], totalCount, indexedAt}`. Use this for ad-hoc lookups across the user\'s knowledge base — cheaper than calling a skill since it goes directly to the daemon. Examples: find prior writeups by topic, locate the meeting note with someone, see whether a concept already has a wiki entry.',
-  {
-    query: z.string().describe('Search query (Japanese OK, non-empty)'),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(100)
-      .optional()
-      .describe('Maximum results to return (default 20, range 1-100)'),
-  },
-  async (args) => callHostTool('deshi_daemon_search_files', args),
-);
+// daemon_list_skills / daemon_refresh_skills / daemon_search_files は削除 (ADR-0009 passthrough)。
+// skill 解決も wiki/raw 検索も deshi 側 (deshi_run_start) に委譲する。nanoclaw は持たない。
 
 // ─────────────────────────────────────────────────────────────
 // session_routing reader — agent の代わりに channelContext を組み立てる
@@ -306,22 +266,13 @@ function readSessionRouting(): ChannelContext {
 //   daemon 側 SkillRegistry に委譲する。
 //   channelContext は agent からは受け取らず、`session_routing` から自動注入。
 // ─────────────────────────────────────────────────────────────
-const startupSkills = await fetchSkillsAtStartup();
-const runSkillDescription = buildRunSkillDescription(startupSkills);
-
 server.tool(
-  'daemon_run_skill',
-  runSkillDescription,
+  'deshi_run_start',
+  'deshi に処理を委譲する唯一の dispatch 窓口。ユーザー発話・質問・相談・依頼を、内容を問わず input にそのまま渡す（skill 名が明確なら "/deshi-<skill> <args>" も可）。deshi 側で skill 解決して非同期実行し jobId を返す。結果は deshi_run_poll で取得する。nanoclaw は自分で答えたり Google/検索を直接行ったりしない — すべてここに流す。',
   {
-    skillName: z
+    input: z
       .string()
-      .describe(
-        'Skill name (e.g. "sync"). Must be one of the skills returned by `daemon_list_skills` / `daemon_refresh_skills` — submitting a non-exposed skill fails at the daemon.',
-      ),
-    args: z
-      .string()
-      .optional()
-      .describe('Optional arguments string appended after the skill name (e.g. "--full")'),
+      .describe('ユーザー発話そのまま、または "/deshi-<skill> <args>"。非空。'),
   },
   async (args) => {
     let channelContext: ChannelContext;
@@ -349,10 +300,10 @@ server.tool(
 //   completed/failed の最終状態を受け取れる。retry ループは書かなくて良い。
 // ─────────────────────────────────────────────────────────────
 server.tool(
-  'daemon_poll_until_done',
-  'Wait for a job submitted via daemon_run_skill to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion).',
+  'deshi_run_poll',
+  'Wait for a job submitted via deshi_run_start to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion).',
   {
-    jobId: z.string().describe('jobId returned by daemon_run_skill'),
+    jobId: z.string().describe('jobId returned by deshi_run_start'),
     timeoutMs: z
       .number()
       .int()
@@ -363,66 +314,7 @@ server.tool(
   async (args) => callHostTool('deshi_daemon_poll_until_done', args),
 );
 
-// ─────────────────────────────────────────────────────────────
-// daemon_gog
-//   Run a whitelisted gog CLI subcommand (Calendar / Docs / Drive / Gmail-read
-//   / auth-status) via deshi daemon POST /gog. Direct primitive — no skill
-//   spawn, no secondary Claude session. Use when the user wants to:
-//     - check / create / update calendar events
-//     - create / write Google Docs
-//     - search / share / list Drive files
-//     - read Gmail (list / search / get)
-//   Destructive operations (delete / send / login / logout) are blocked
-//   server-side and will return an error if requested — direct the user to
-//   the CLI instead.
-// ─────────────────────────────────────────────────────────────
-server.tool(
-  'daemon_gog',
-  [
-    'Run a `gog` CLI subcommand on the host to operate Google services. Subcommand path is dot-separated (e.g. "calendar.events", "docs.create", "gmail.messages.list"). Pass any additional CLI args as a string array — each element is one argv item.',
-    '',
-    'Allowed subcommands (server-enforced whitelist):',
-    '- calendar.events / calendar.event / calendar.calendars / calendar.acl (read)',
-    '- calendar.create / calendar.update (non-destructive write)',
-    '- docs.create / docs.write / docs.info / docs.export',
-    '- drive.ls / drive.search / drive.share / drive.download / drive.upload',
-    '- gmail.messages.list / gmail.messages.get / gmail.messages.search / gmail.labels.list / gmail.threads.list / gmail.threads.get',
-    '- auth.status / auth.list',
-    '',
-    'Blocked (will return 403): any delete / remove, gmail.send, auth.add, auth.remove. The daemon also injects `-a <account>` so caller-supplied `-a` / `--account` / `--client` / `--enable-commands` args are rejected.',
-    '',
-    'Common flag patterns (gog has its own flag names — they do NOT match Google API field names like `maxResults` / `timeMin`):',
-    '- Time range for calendar.events: --today | --tomorrow | --week | --days=N | --from=<RFC3339|date|relative> --to=<...>. The relative form accepts "today" / "tomorrow" / "monday".',
-    '- Result limits: --max=N (default 10). Do NOT use --max-results.',
-    '- Search / scope: --query=STRING (free text), --all (across all calendars).',
-    '- Output: --plain (TSV, best for terse summaries) or -j / --json.',
-    '- The subcommand "calendar.events" itself performs the list action — do NOT append `.list` to the subcommand path (it is not in the allowlist).',
-    '',
-    'Examples:',
-    '- Tomorrow\'s events: subcommand="calendar.events", args=["--tomorrow", "--plain", "--max=10"].',
-    '- Today across all calendars: subcommand="calendar.events", args=["--today", "--all", "--plain"].',
-    '- Recent unread Gmail: subcommand="gmail.messages.list", args=["--query=is:unread", "--max=20", "--plain"].',
-    '',
-    'Returns `{ok, subcommand, stdout, stderr, exitCode}`. The agent should choose the appropriate `--plain` / `--json` flag in `args` to control output format.',
-  ].join('\n'),
-  {
-    subcommand: z
-      .string()
-      .describe('Dot-separated subcommand path (e.g. "calendar.events")'),
-    args: z
-      .array(z.string())
-      .optional()
-      .describe('Additional CLI args, one element per argv item (e.g. ["--days", "1", "--plain"])'),
-    timeout: z
-      .number()
-      .int()
-      .min(1000)
-      .max(5 * 60_000)
-      .optional()
-      .describe('Subprocess timeout in ms (default 30000, max 300000)'),
-  },
-  async (args) => callHostTool('deshi_daemon_gog', args),
-);
+// daemon_gog は削除 (ADR-0009 passthrough)。Google 操作は deshi_run_start に委譲する。
 
 // ─────────────────────────────────────────────────────────────
 // daemon_send_file_to_chat
@@ -474,6 +366,107 @@ server.tool(
       };
     }
     return callHostTool('deshi_daemon_send_file_to_chat', { ...args, channelContext });
+  },
+);
+
+// ─────────────────────────────────────────────────────────────
+// daemon_push_file_to_raw
+//   Push a file that lives INSIDE this container (e.g. an inbound Telegram
+//   attachment saved under /tmp) to deshi-raw via `POST /files/upload`
+//   (ADR-0008 / ADR-0009). Mirrors the passthrough policy: nanoclaw does NOT
+//   hold business state, every received file is shipped to deshi immediately
+//   and the local copy is removed by the caller.
+//
+//   Allowed `dest_subpath` prefixes are enforced by deshi daemon:
+//     - inbox/<source>/<YYYY-MM-DD>/<filename>   (= raw inbox staging)
+//     - outputs/<YYYY-MM-DD>-<slug>/<filename>   (= deshi-generated artifacts)
+//
+//   Implementation: read `local_path` inside the container, compute sha256,
+//   base64-encode, and forward via host-tools-server. Host-tools-server's
+//   JSON body limit is 20 MiB, so the effective file-size cap here is ~14 MiB
+//   after base64 overhead. For larger files a multipart pipeline can be
+//   added later (out of scope for the initial push API).
+// ─────────────────────────────────────────────────────────────
+const MAX_PUSH_FILE_BYTES = 14 * 1024 * 1024; // 14 MiB raw → ~18.7 MiB base64
+
+server.tool(
+  'daemon_push_file_to_raw',
+  [
+    'Push a file located inside this container to deshi-raw via the deshi daemon (ADR-0008). Use this for inbound chat attachments (Telegram/LINE PDF / image / voice) and for any artifact the agent must hand off to deshi for further processing. After a successful call, delete the local file — nanoclaw must not retain business state (ADR-0009 passthrough).',
+    '',
+    'Allowed dest_subpath prefixes (enforced by deshi daemon):',
+    '- inbox/<source>/<YYYY-MM-DD>/<filename>  — raw inbox staging for ingest',
+    '- outputs/<YYYY-MM-DD>-<slug>/<filename>  — deshi-generated artifacts',
+    '',
+    `Max raw file size for this call: ${MAX_PUSH_FILE_BYTES} bytes (~14 MiB). Larger files are rejected before transfer.`,
+    '',
+    'Outcome values in the response:',
+    '- created           — first time write succeeded',
+    '- skipped_same_sha  — identical content already at that path (idempotent re-send)',
+    '- renamed_collision — inbox path existed with different content; written as `<name>-<sha8>.<ext>`',
+    '- overwritten       — outputs path replaced because overwrite=true was set',
+    '',
+    'On 409 (outputs/ collision) re-run with overwrite=true if replacement is intended.',
+  ].join('\n'),
+  {
+    local_path: z
+      .string()
+      .describe('Absolute path inside this container (e.g. /tmp/whitepaper.pdf). The file is read here, transferred, and the caller is responsible for deleting the local copy after success.'),
+    dest_subpath: z
+      .string()
+      .describe('Destination relative to deshi-raw (e.g. "inbox/nanoclaw/2026-06-10/whitepaper.pdf").'),
+    source: z
+      .string()
+      .optional()
+      .describe('Source label written to the deshi audit log (e.g. "nanoclaw").'),
+    overwrite: z
+      .boolean()
+      .optional()
+      .describe('Allow overwriting an existing outputs/ artifact. Has no effect for inbox/ (always renamed on collision).'),
+  },
+  async (args) => {
+    const { local_path, dest_subpath, source, overwrite } = args;
+    try {
+      // Lazy import to keep cold-start light; only needed when this tool runs.
+      const { readFile, stat } = await import('node:fs/promises');
+      const { createHash } = await import('node:crypto');
+
+      const st = await stat(local_path);
+      if (!st.isFile()) {
+        return {
+          content: [{ type: 'text' as const, text: `local_path is not a regular file: ${local_path}` }],
+          isError: true,
+        };
+      }
+      if (st.size > MAX_PUSH_FILE_BYTES) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `file ${local_path} is ${st.size} bytes which exceeds the ${MAX_PUSH_FILE_BYTES}-byte limit for this transfer path`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      const buf = await readFile(local_path);
+      const sha256 = createHash('sha256').update(buf).digest('hex');
+      const file_b64 = buf.toString('base64');
+
+      return callHostTool('deshi_daemon_push_file_to_raw', {
+        file_b64,
+        sha256,
+        dest_subpath,
+        ...(source !== undefined ? { source } : {}),
+        ...(overwrite !== undefined ? { overwrite } : {}),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: `Failed to push ${local_path}: ${message}` }],
+        isError: true,
+      };
+    }
   },
 );
 

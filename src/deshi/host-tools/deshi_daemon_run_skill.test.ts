@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { daemonRunSkillHandler, type DaemonRunSkillRequest } from './deshi_daemon_run_skill.js';
 
 const validBody: DaemonRunSkillRequest = {
-  skillName: 'sync',
+  input: '今日の予定教えて',
   channelContext: {
     channel: 'telegram',
     platformId: 'u-1',
@@ -28,7 +28,7 @@ describe('daemonRunSkillHandler', () => {
     }
   });
 
-  it('POST /run に input + channelContext を渡し、202 のレスポンスを ok 形式で返す', async () => {
+  it('POST /run に input をそのまま渡し、202 のレスポンスを ok 形式で返す', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 202,
@@ -48,14 +48,15 @@ describe('daemonRunSkillHandler', () => {
       input: string;
       channelContext: unknown;
     };
-    expect(body.input).toBe('/sync');
+    // 自由文をそのまま渡す（skillName からの組み立てはしない）
+    expect(body.input).toBe('今日の予定教えて');
     expect(body.channelContext).toEqual(validBody.channelContext);
     // POST /run は localhost auto-auth するので Authorization は送らない
     const headers = init.headers as Record<string, string>;
     expect(headers['Authorization']).toBeUndefined();
   });
 
-  it('args が指定された場合は input に追記する', async () => {
+  it('skill 名つきの自由文 ("/deshi-sync --full") もそのまま渡す', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ jobId: 'JOB2', threadId: 'T2' }),
@@ -63,11 +64,11 @@ describe('daemonRunSkillHandler', () => {
     } as unknown as Response);
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await daemonRunSkillHandler({ ...validBody, args: '--full' });
+    await daemonRunSkillHandler({ ...validBody, input: '/deshi-sync --full' });
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(init.body as string) as { input: string };
-    expect(body.input).toBe('/sync --full');
+    expect(body.input).toBe('/deshi-sync --full');
   });
 
   it('DESHI_DAEMON_URL で daemon URL を差し替えできる', async () => {
@@ -106,13 +107,19 @@ describe('daemonRunSkillHandler', () => {
     await expect(daemonRunSkillHandler(validBody)).rejects.toThrow(/returned unexpected body/);
   });
 
-  it('skillName が無い body は throw する (validation)', async () => {
-    await expect(daemonRunSkillHandler({} as unknown)).rejects.toThrow(/skillName and channelContext are required/);
+  it('input が無い body は throw する (validation)', async () => {
+    await expect(daemonRunSkillHandler({} as unknown)).rejects.toThrow(/input and channelContext are required/);
+  });
+
+  it('input が空文字の body は throw する (validation)', async () => {
+    await expect(
+      daemonRunSkillHandler({ input: '  ', channelContext: { channel: 'telegram', platformId: 'u-1' } } as unknown),
+    ).rejects.toThrow(/input and channelContext are required/);
   });
 
   it('channelContext が無い body は throw する (validation)', async () => {
-    await expect(daemonRunSkillHandler({ skillName: 'sync' } as unknown)).rejects.toThrow(
-      /skillName and channelContext are required/,
+    await expect(daemonRunSkillHandler({ input: 'hi' } as unknown)).rejects.toThrow(
+      /input and channelContext are required/,
     );
   });
 
@@ -132,7 +139,7 @@ describe('daemonRunSkillHandler', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const bodyWithoutThreadId: DaemonRunSkillRequest = {
-      skillName: 'sync',
+      input: 'hi',
       channelContext: { channel: 'telegram', platformId: 'telegram:8692810494' },
     };
     await daemonRunSkillHandler(bodyWithoutThreadId);
