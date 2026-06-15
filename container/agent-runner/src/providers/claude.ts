@@ -68,6 +68,33 @@ function mcpAllowPattern(serverName: string): string {
   return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
 }
 
+// deshi (isbtty/deshi#416): MCP servers named here are forced non-deferred
+// (`alwaysLoad: true`) so their tools sit in the turn-1 prompt instead of being
+// hidden behind ToolSearch. The SDK defers MCP tools by default when tool search
+// is enabled; for the `deshi` host-tools bridge that caused a degraded session to
+// loop on ToolSearch without ever emitting the `deshi_run_start` tool_use
+// (delegation silently never fired). Comma-separated server names; default `deshi`.
+// See nanoclaw .deshi/adr/0015-deshi-mcp-always-load.md.
+const MCP_ALWAYS_LOAD_SERVERS = (process.env.MCP_ALWAYS_LOAD_SERVERS ?? 'deshi')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function applyAlwaysLoad(
+  servers: Record<string, McpServerConfig>,
+): Record<string, McpServerConfig> {
+  if (MCP_ALWAYS_LOAD_SERVERS.length === 0) return servers;
+  const out: Record<string, McpServerConfig> = {};
+  for (const [name, cfg] of Object.entries(servers)) {
+    // `alwaysLoad` is a valid SDK McpStdioServerConfig field; the provider's
+    // local McpServerConfig type omits it, so cast to attach it at runtime.
+    out[name] = MCP_ALWAYS_LOAD_SERVERS.includes(name)
+      ? ({ ...cfg, alwaysLoad: true } as McpServerConfig)
+      : cfg;
+  }
+  return out;
+}
+
 interface SDKUserMessage {
   type: 'user';
   message: { role: 'user'; content: string };
@@ -416,7 +443,7 @@ export class ClaudeProvider implements AgentProvider {
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         settingSources: ['project', 'user', 'local'],
-        mcpServers: this.mcpServers,
+        mcpServers: applyAlwaysLoad(this.mcpServers),
         hooks: {
           PreToolUse: [{ hooks: [preToolUseHook] }],
           PostToolUse: [{ hooks: [postToolUseHook] }],
