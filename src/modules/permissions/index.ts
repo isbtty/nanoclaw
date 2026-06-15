@@ -42,6 +42,7 @@ import {
   REJECT_VALUE,
   requestChannelApproval,
 } from './channel-approval.js';
+import { maybeDeliverScopeLink } from './channel-scope-link.js';
 import { addMember } from './db/agent-group-members.js';
 import {
   deletePendingChannelApproval,
@@ -504,6 +505,10 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 
   deletePendingChannelApproval(row.messaging_group_id);
 
+  // Follow up with the knowledge-scope onboarding link (isbtty/deshi#396).
+  // Best-effort + deshi-gated: a failure here doesn't block the replay below.
+  await maybeDeliverScopeLink(targetAgentGroupId, row.messaging_group_id, approverId);
+
   try {
     await routeInbound(event);
   } catch (err) {
@@ -628,5 +633,10 @@ setMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
         .catch(() => {});
     }
   }
+
+  // Knowledge-scope onboarding link (isbtty/deshi#396). Gated on the new agent
+  // group using the deshi MCP server, so this is a no-op unless it was created
+  // deshi-backed; harmless either way.
+  await maybeDeliverScopeLink(ag.id, row.messaging_group_id, row.approver_user_id);
   return true;
 });
