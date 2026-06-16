@@ -311,7 +311,21 @@ server.tool(
       .optional()
       .describe('Max wait time in milliseconds (default 1800000 = 30 minutes)'),
   },
-  async (args) => callHostTool('deshi_daemon_poll_until_done', args),
+  async (args) => {
+    // channelContext を session_routing から注入する。host 側 poll handler が
+    // 「遅い job のとき中間 ack を配信」するために使う (isbtty/deshi#423)。
+    // 読み出し失敗時は channelContext 無しで poll を続行 (ack は出ないが本体は動く)。
+    let channelContext: ChannelContext | undefined;
+    try {
+      channelContext = readSessionRouting();
+    } catch {
+      channelContext = undefined;
+    }
+    return callHostTool('deshi_daemon_poll_until_done', {
+      ...args,
+      ...(channelContext ? { channelContext } : {}),
+    });
+  },
 );
 
 // daemon_gog は削除 (ADR-0009 passthrough)。Google 操作は deshi_run_start に委譲する。

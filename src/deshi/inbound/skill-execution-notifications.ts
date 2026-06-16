@@ -90,7 +90,7 @@ import { InboundHandlerError } from './errors.js';
  * しない、すなわち wiring の session_mode 通りに振る舞う)。安全側 (= 既存
  * session を引きにいく、見つからなければ shared モードで新規作成)。
  */
-const SUPPORTS_THREADS: Record<string, boolean> = {
+export const SUPPORTS_THREADS: Record<string, boolean> = {
   // upstream src/channels/discord.ts:35
   discord: true,
   // upstream src/channels/slack.ts:19
@@ -371,7 +371,7 @@ function validateRequest(body: unknown): SkillExecutionNotificationRequest {
  *   router 経路で作られる session と inbound 経由で引く session が乖離すると
  *   会話継続性 (issue #247 で議論済み) が壊れる。
  */
-function computeEffectiveSessionMode(
+export function computeEffectiveSessionMode(
   wiredMode: 'shared' | 'per-thread' | 'agent-shared',
   adapterSupportsThreads: boolean,
   isGroup: number,
@@ -397,7 +397,7 @@ function computeEffectiveSessionMode(
  *
  * seq は upstream と同じ `MAX(seq)+2` で偶数を維持 (host=even, container=odd)。
  */
-function writeOutboundMessage(message: {
+export function writeOutboundMessage(message: {
   agentGroupId: string;
   sessionId: string;
   id: string;
