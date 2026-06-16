@@ -60,6 +60,19 @@
         ".claude/skills/deshi-restart-nanoclaw/"
       ],
       "introducedIn": "v0.2.0"
+    },
+    {
+      "name": "deshi-update-knowledge-scope",
+      "kind": "feature",
+      "version": "0.1.0",
+      "owner": "@isbtty/deshi-core",
+      "sources": [
+        ".claude/skills/deshi-update-knowledge-scope/",
+        "src/modules/permissions/knowledge-scope-command.ts",
+        "src/modules/permissions/channel-scope-link.ts",
+        "src/router.ts"
+      ],
+      "introducedIn": "v0.2.0"
     }
   ]
 }

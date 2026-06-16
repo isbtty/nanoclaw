@@ -55,7 +55,7 @@ describe('maybeDeliverScopeLink', () => {
   it('deshi-backed group: keys the link by platform_id (no channel double-prefix) and DMs the approver the url', async () => {
     getContainerConfigMock.mockReturnValue(configWith({ deshi: { instructions: 'x' } }));
 
-    await maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover');
+    await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toEqual({ ok: true });
 
     // platform_id verbatim — NOT `telegram:telegram:-5146234415` (isbtty/deshi#420).
     expect(fetchScopeLinkMock).toHaveBeenCalledWith('telegram:-5146234415');
@@ -74,10 +74,13 @@ describe('maybeDeliverScopeLink', () => {
     expect(text).not.toContain('`');
   });
 
-  it('non-deshi group: skips entirely (no daemon call, no DM)', async () => {
+  it('non-deshi group: skips entirely (no daemon call, no DM), returns not-deshi', async () => {
     getContainerConfigMock.mockReturnValue(configWith({ gmail: {} }));
 
-    await maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover');
+    await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toEqual({
+      ok: false,
+      reason: 'not-deshi',
+    });
 
     expect(fetchScopeLinkMock).not.toHaveBeenCalled();
     expect(deliverMock).not.toHaveBeenCalled();
@@ -92,21 +95,27 @@ describe('maybeDeliverScopeLink', () => {
     expect(deliverMock).not.toHaveBeenCalled();
   });
 
-  it('approver has no DM channel: mints link but does not deliver, and does not throw', async () => {
+  it('approver has no DM channel: mints link but does not deliver, returns no-dm', async () => {
     getContainerConfigMock.mockReturnValue(configWith({ deshi: {} }));
     ensureUserDmMock.mockResolvedValue(null);
 
-    await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toBeUndefined();
+    await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toEqual({
+      ok: false,
+      reason: 'no-dm',
+    });
 
     expect(fetchScopeLinkMock).toHaveBeenCalledTimes(1);
     expect(deliverMock).not.toHaveBeenCalled();
   });
 
-  it('daemon call fails: swallows the error (best-effort), no DM', async () => {
+  it('daemon call fails: swallows the error (best-effort), returns error, no DM', async () => {
     getContainerConfigMock.mockReturnValue(configWith({ deshi: {} }));
     fetchScopeLinkMock.mockRejectedValue(new Error('ECONNREFUSED'));
 
-    await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toBeUndefined();
+    await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toEqual({
+      ok: false,
+      reason: 'error',
+    });
 
     expect(deliverMock).not.toHaveBeenCalled();
   });

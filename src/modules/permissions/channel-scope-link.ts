@@ -14,7 +14,10 @@
  * server by default and are skipped naturally.
  *
  * Best-effort: any failure (no deshi, daemon down, no approver DM) is logged
- * and swallowed so it never blocks wiring or the message replay.
+ * and swallowed so it never blocks wiring or the message replay. The connect
+ * flow ignores the return; the on-demand re-issue command
+ * (`/update-knowledge-scope`, see `knowledge-scope-command.ts`) uses it to
+ * report success/failure back to the requester.
  */
 import { getContainerConfig } from '../../db/container-configs.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
@@ -22,6 +25,8 @@ import { getDeliveryAdapter } from '../../delivery.js';
 import { fetchDeshiScopeLink } from '../../deshi/fetch-scope-link.js';
 import { log } from '../../log.js';
 import { ensureUserDm } from './user-dm.js';
+
+export type ScopeLinkResult = { ok: true } | { ok: false; reason: 'not-deshi' | 'no-mg' | 'no-dm' | 'error' };
 
 /** True when the agent group's container config wires the `deshi` MCP server. */
 function usesDeshiMcp(agentGroupId: string): boolean {
@@ -36,24 +41,26 @@ function usesDeshiMcp(agentGroupId: string): boolean {
 }
 
 /**
- * DM the approver a scope-setup link for the just-wired channel. No-op
- * (logged) when the agent group isn't deshi-backed, the messaging group is
- * gone, the daemon call fails, or the approver has no reachable DM.
+ * DM the recipient a scope-setup link for the channel. Returns a result so
+ * callers can react: the connect flow ignores it (best-effort), the on-demand
+ * command surfaces it to the requester. No DM is sent (and a reason is
+ * returned) when the agent group isn't deshi-backed, the messaging group is
+ * gone, the daemon call fails, or the recipient has no reachable DM.
  */
 export async function maybeDeliverScopeLink(
   agentGroupId: string,
   messagingGroupId: string,
-  approverUserId: string,
-): Promise<void> {
+  recipientUserId: string,
+): Promise<ScopeLinkResult> {
   if (!usesDeshiMcp(agentGroupId)) {
     log.debug('Scope-link skipped — agent group does not use the deshi MCP server', { agentGroupId });
-    return;
+    return { ok: false, reason: 'not-deshi' };
   }
 
   const mg = getMessagingGroup(messagingGroupId);
   if (!mg) {
     log.warn('Scope-link skipped — messaging group not found', { messagingGroupId });
-    return;
+    return { ok: false, reason: 'no-mg' };
   }
   // The deshi scope store keys on `channelContext.platformId` as-is
   // (isbtty/deshi#420), which the container reads from
@@ -67,13 +74,13 @@ export async function maybeDeliverScopeLink(
   try {
     const { url } = await fetchDeshiScopeLink(channelId);
 
-    const approverDm = await ensureUserDm(approverUserId);
-    if (!approverDm) {
-      log.warn('Scope-link minted but approver has no DM channel', { approverUserId, channelId });
-      return;
+    const recipientDm = await ensureUserDm(recipientUserId);
+    if (!recipientDm) {
+      log.warn('Scope-link minted but recipient has no DM channel', { recipientUserId, channelId });
+      return { ok: false, reason: 'no-dm' };
     }
     const adapter = getDeliveryAdapter();
-    if (!adapter) return;
+    if (!adapter) return { ok: false, reason: 'error' };
 
     // The scope-link token is base64url; its `_` chars collide with Telegram's
     // legacy-Markdown italic rule (`sanitizeTelegramLegacyMarkdown`), which is
@@ -88,16 +95,18 @@ export async function maybeDeliverScopeLink(
     const linkUrl = url.replaceAll('_', '%5F');
 
     await adapter.deliver(
-      approverDm.channel_type,
-      approverDm.platform_id,
+      recipientDm.channel_type,
+      recipientDm.platform_id,
       null,
       'chat-sdk',
       JSON.stringify({
         text: `📚 このチャンネルで公開する知識を選んでください（10分有効・1回限り）。下のリンクを開いてください:\n${linkUrl}`,
       }),
     );
-    log.info('Scope-link delivered to approver', { messagingGroupId, agentGroupId, channelId });
+    log.info('Scope-link delivered to recipient', { messagingGroupId, agentGroupId, channelId });
+    return { ok: true };
   } catch (err) {
     log.error('Scope-link delivery failed', { messagingGroupId, agentGroupId, channelId, err });
+    return { ok: false, reason: 'error' };
   }
 }
