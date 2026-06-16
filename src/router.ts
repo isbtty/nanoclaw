@@ -27,6 +27,7 @@ import {
   getMessagingGroupWithAgentCount,
 } from './db/messaging-groups.js';
 import { findSessionForAgent } from './db/sessions.js';
+import { handleKnowledgeScopeCommand } from './modules/permissions/knowledge-scope-command.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
@@ -428,6 +429,18 @@ async function deliverToAgent(
   // Filtered commands are dropped silently. Denied admin commands get a
   // permission-denied response written directly to messages_out.
   if (event.message.kind === 'chat' || event.message.kind === 'chat-sdk') {
+    // On-demand knowledge-scope edit-link command (deshi-update-knowledge-scope).
+    // Owner-gated; a handled command is answered directly and never reaches the
+    // container / deshi passthrough.
+    const scopeHandled = await handleKnowledgeScopeCommand({
+      content: event.message.content,
+      userId,
+      agentGroupId: agent.agent_group_id,
+      messagingGroupId: mg.id,
+      deliveryAddr,
+    });
+    if (scopeHandled) return;
+
     const gate = gateCommand(event.message.content, userId, agent.agent_group_id);
     if (gate.action === 'filter') {
       log.debug('Filtered command dropped by gate', { agentGroupId: agent.agent_group_id });
