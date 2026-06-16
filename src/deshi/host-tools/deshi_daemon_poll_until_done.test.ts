@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../post-deshi-ack.js', () => ({ postDeshiRunAck: vi.fn(() => true) }));
+
 import { daemonPollUntilDoneHandler, type JobStatusResponse } from './deshi_daemon_poll_until_done.js';
+import { postDeshiRunAck } from '../post-deshi-ack.js';
 
 const DAEMON_RESTARTED_SENTINEL = 'daemon が再起動したため、この job の実行状態は失われました。';
+const CHANNEL_CTX = { channel: 'telegram', platformId: 'tg-1', threadId: 'thr-1' };
 
 function mockResponseSequence(responses: Partial<JobStatusResponse>[]): ReturnType<typeof vi.fn> {
   let i = 0;
@@ -22,9 +26,12 @@ describe('daemonPollUntilDoneHandler', () => {
   const originalSecret = process.env.DESHI_DAEMON_DEVICE_SECRET;
   const originalUrl = process.env.DESHI_DAEMON_URL;
 
+  const originalAckThreshold = process.env.DESHI_RUN_ACK_THRESHOLD_MS;
+
   beforeEach(() => {
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    vi.mocked(postDeshiRunAck).mockClear();
   });
 
   afterEach(() => {
@@ -39,7 +46,64 @@ describe('daemonPollUntilDoneHandler', () => {
     } else {
       process.env.DESHI_DAEMON_URL = originalUrl;
     }
+    if (originalAckThreshold === undefined) {
+      delete process.env.DESHI_RUN_ACK_THRESHOLD_MS;
+    } else {
+      process.env.DESHI_RUN_ACK_THRESHOLD_MS = originalAckThreshold;
+    }
     vi.useRealTimers();
+  });
+
+  describe('中間 ack (#423)', () => {
+    it('fast job (1 回目 completed) は ack を出さない', async () => {
+      process.env.DESHI_RUN_ACK_THRESHOLD_MS = '50';
+      const fetchMock = mockResponseSequence([{ status: 'completed', success: true, result: 'ok' }]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await daemonPollUntilDoneHandler({ jobId: 'JOB1', channelContext: CHANNEL_CTX });
+
+      expect(postDeshiRunAck).not.toHaveBeenCalled();
+    });
+
+    it('slow job (閾値超過 pending) で ack を 1 回だけ出す', async () => {
+      vi.useFakeTimers();
+      process.env.DESHI_RUN_ACK_THRESHOLD_MS = '50';
+      const fetchMock = mockResponseSequence([
+        { status: 'pending', retryAfterMs: 100 },
+        { status: 'pending', retryAfterMs: 100 },
+        { status: 'pending', retryAfterMs: 100 },
+        { status: 'completed', success: true, result: 'done' },
+      ]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const promise = daemonPollUntilDoneHandler({ jobId: 'JOB1', channelContext: CHANNEL_CTX });
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+      const res = await promise;
+
+      expect(res.status).toBe('completed');
+      expect(postDeshiRunAck).toHaveBeenCalledTimes(1);
+      expect(postDeshiRunAck).toHaveBeenCalledWith(CHANNEL_CTX);
+    });
+
+    it('channelContext が無ければ slow でも ack を出さない', async () => {
+      vi.useFakeTimers();
+      process.env.DESHI_RUN_ACK_THRESHOLD_MS = '50';
+      const fetchMock = mockResponseSequence([
+        { status: 'pending', retryAfterMs: 100 },
+        { status: 'pending', retryAfterMs: 100 },
+        { status: 'completed', success: true },
+      ]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const promise = daemonPollUntilDoneHandler({ jobId: 'JOB1' });
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+      await promise;
+
+      expect(postDeshiRunAck).not.toHaveBeenCalled();
+    });
   });
 
   it('1 回目に completed が返る場合は即座に return する', async () => {

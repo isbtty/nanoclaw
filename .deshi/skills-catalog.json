@@ -50,6 +50,16 @@
         "src/channels/deshi.ts"
       ],
       "introducedIn": "v0.2.0"
+    },
+    {
+      "name": "deshi-restart-nanoclaw",
+      "kind": "operational",
+      "version": "0.1.0",
+      "owner": "@isbtty/deshi-core",
+      "sources": [
+        ".claude/skills/deshi-restart-nanoclaw/"
+      ],
+      "introducedIn": "v0.2.0"
     }
   ]
 }
