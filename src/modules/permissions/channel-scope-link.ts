@@ -51,6 +51,12 @@ export async function maybeDeliverScopeLink(
   agentGroupId: string,
   messagingGroupId: string,
   recipientUserId: string,
+  /**
+   * Optional preamble prepended to the DM (used by the on-demand command when
+   * forwarding a non-owner's request to the owner — names the channel and who
+   * asked). When omitted, the default onboarding wording is used.
+   */
+  preamble?: string,
 ): Promise<ScopeLinkResult> {
   if (!usesDeshiMcp(agentGroupId)) {
     log.debug('Scope-link skipped — agent group does not use the deshi MCP server', { agentGroupId });
@@ -94,14 +100,15 @@ export async function maybeDeliverScopeLink(
     // token's underscores are rewritten.
     const linkUrl = url.replaceAll('_', '%5F');
 
+    const text = preamble
+      ? `${preamble}\n${linkUrl}`
+      : `📚 このチャンネルで公開する知識を選んでください（10分有効・1回限り）。下のリンクを開いてください:\n${linkUrl}`;
     await adapter.deliver(
       recipientDm.channel_type,
       recipientDm.platform_id,
       null,
       'chat-sdk',
-      JSON.stringify({
-        text: `📚 このチャンネルで公開する知識を選んでください（10分有効・1回限り）。下のリンクを開いてください:\n${linkUrl}`,
-      }),
+      JSON.stringify({ text }),
     );
     log.info('Scope-link delivered to recipient', { messagingGroupId, agentGroupId, channelId });
     return { ok: true };

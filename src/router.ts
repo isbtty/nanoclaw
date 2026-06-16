@@ -437,7 +437,6 @@ async function deliverToAgent(
       userId,
       agentGroupId: agent.agent_group_id,
       messagingGroupId: mg.id,
-      sessionId: session.id,
       deliveryAddr,
     });
     if (scopeHandled) return;
