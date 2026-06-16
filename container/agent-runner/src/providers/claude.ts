@@ -68,27 +68,33 @@ function mcpAllowPattern(serverName: string): string {
   return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
 }
 
-// deshi (isbtty/deshi#416): MCP servers named here are forced non-deferred
-// (`alwaysLoad: true`) so their tools sit in the turn-1 prompt instead of being
-// hidden behind ToolSearch. The SDK defers MCP tools by default when tool search
-// is enabled; for the `deshi` host-tools bridge that caused a degraded session to
-// loop on ToolSearch without ever emitting the `deshi_run_start` tool_use
-// (delegation silently never fired). Comma-separated server names; default `deshi`.
-// See nanoclaw .deshi/adr/0015-deshi-mcp-always-load.md.
-const MCP_ALWAYS_LOAD_SERVERS = (process.env.MCP_ALWAYS_LOAD_SERVERS ?? 'deshi')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+// deshi (isbtty/deshi#416): ここに挙げた名前の MCP server を非 deferred
+// (`alwaysLoad: true`) にし、その tool を turn-1 prompt に常駐させる (ToolSearch の
+// 裏に隠さない)。SDK は tool search 有効時、MCP tool をデフォルトで deferred に
+// するが、`deshi` host-tools bridge がそれに該当すると、劣化セッションが
+// `deshi_run_start` の tool_use を一度も emit せず ToolSearch をループし続け、
+// 委譲が無言で不発になる事象が起きた。
+//
+// `deshi` は常に含める (上書き不可)。env MCP_ALWAYS_LOAD_SERVERS は comma 区切りで
+// 「追加」のみ可能 — env を設定しても deshi が外れないようにして #416 の再発を防ぐ
+// (`??` で default を丸ごと上書きする旧実装は、env 設定時に deshi が黙って外れる
+// リスクがあった)。詳細は nanoclaw .deshi/adr/0015-deshi-mcp-always-load.md。
+const MCP_ALWAYS_LOAD_SERVERS = new Set<string>([
+  'deshi',
+  ...(process.env.MCP_ALWAYS_LOAD_SERVERS?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean) ?? []),
+]);
 
 function applyAlwaysLoad(
   servers: Record<string, McpServerConfig>,
 ): Record<string, McpServerConfig> {
-  if (MCP_ALWAYS_LOAD_SERVERS.length === 0) return servers;
+  if (MCP_ALWAYS_LOAD_SERVERS.size === 0) return servers;
   const out: Record<string, McpServerConfig> = {};
   for (const [name, cfg] of Object.entries(servers)) {
-    // `alwaysLoad` is a valid SDK McpStdioServerConfig field; the provider's
-    // local McpServerConfig type omits it, so cast to attach it at runtime.
-    out[name] = MCP_ALWAYS_LOAD_SERVERS.includes(name)
+    // `alwaysLoad` は SDK の McpStdioServerConfig が持つ正規フィールドだが、
+    // provider 側のローカル McpServerConfig 型には無いため、cast して runtime で付与する。
+    out[name] = MCP_ALWAYS_LOAD_SERVERS.has(name)
       ? ({ ...cfg, alwaysLoad: true } as McpServerConfig)
       : cfg;
   }

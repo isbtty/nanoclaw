@@ -34,11 +34,21 @@ deshi host-tools bridge の MCP tool を **常時ロード (`alwaysLoad: true`)*
 付与する `applyAlwaysLoad()` を通す。
 
 ```ts
-const MCP_ALWAYS_LOAD_SERVERS = (process.env.MCP_ALWAYS_LOAD_SERVERS ?? 'deshi')
-  .split(',').map((s) => s.trim()).filter(Boolean);
+// `deshi` は常に含める (上書き不可)。env は「追加」のみ可能。
+const MCP_ALWAYS_LOAD_SERVERS = new Set<string>([
+  'deshi',
+  ...(process.env.MCP_ALWAYS_LOAD_SERVERS?.split(',').map((s) => s.trim()).filter(Boolean) ?? []),
+]);
 // ...
 mcpServers: applyAlwaysLoad(this.mcpServers),
 ```
+
+> **env は加算式 (上書き不可)**: 初版は `process.env.MCP_ALWAYS_LOAD_SERVERS ?? 'deshi'`
+> で default を丸ごと差し替える形だったが、env を別値 (例 `"gmail"`) や空文字に設定
+> すると **deshi が alwaysLoad から黙って外れ #416 が再発する**リスクがあった。
+> そのため `deshi` を固定で含める Set に変更し、env は追加のみ行えるようにした。
+> deshi 固有名を upstream ファイルに直書きする形になるが、上書きで委譲不発に陥る
+> correctness リスクを upstream 純度より優先した。
 
 ### 検討した代替案と棄却理由
 
