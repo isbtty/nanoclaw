@@ -4,8 +4,12 @@
  * When the owner wires a newly-registered channel to a deshi-backed agent
  * group, we DM them a signed one-time link that opens deshi's scope-selection
  * page for this channel. The owner picks which wiki subtrees the channel may
- * see; deshi persists the choice and enforces it on `/deshi-general` via the
- * scoped knowledge MCP. nanoclaw is a thin relay here — it only mints the link
+ * see; deshi persists the choice and enforces it on the scoped knowledge
+ * window `/deshi-knowledge-search` via the scoped knowledge MCP (isbtty/deshi
+ * ADR-0010 split the scoped knowledge window out of the full-capability
+ * `/deshi-general`; nanoclaw classifies intent and routes knowledge questions
+ * to the former).
+ * nanoclaw is a thin relay here — it only mints the link
  * (`POST /knowledge/scope-link`) and forwards the URL.
  *
  * Gated on the wired agent group actually using the `deshi` MCP server: a
