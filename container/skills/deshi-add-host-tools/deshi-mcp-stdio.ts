@@ -8,10 +8,6 @@
  *   - health                  : bridge 自身の生存確認 (`POST /tools/health`)
  *   - daemon_run_skill        : deshi daemon の POST /run を叩く
  *   - daemon_poll_until_done  : deshi daemon の GET /jobs/:jobId を long polling
- *   - daemon_list_skills      : 起動時の skill 一覧 discovery
- *   - daemon_refresh_skills   : 実行時の skill 一覧 re-fetch
- *   - daemon_search_files     : deshi-wiki/deshi-raw の hybrid search (qmd 経由)
- *   - daemon_gog              : Google Calendar/Docs/Drive/Gmail を gog CLI 経由で操作
  *   - daemon_send_file_to_chat: deshi-raw/deshi-wiki 配下のファイルを現在のチャットに送る
  *   - daemon_push_file_to_raw  : container 内のファイル (Telegram 添付等) を
  *                                deshi-raw の inbox/ または outputs/ に push (ADR-0008)
@@ -20,12 +16,10 @@
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
  * 呼び出しで明示的に mapping する (ADR-0009)。
  *
- * Skill allowlist の動的化:
- *   起動時に `daemon_list_skills` を呼んで現時点の expose-to-nanoclaw 付き skill を
- *   取得し、`daemon_run_skill` の description に注入する。起動時 fetch が失敗した
- *   場合は generic description で fallback (agent は `daemon_refresh_skills` を
- *   呼んで再取得できる)。skillName の型は `z.string()` に緩和してあり、本物の
- *   allowlist 検証は deshi daemon 側 (SkillRegistry) に委譲する。
+ * Skill 解決の委譲:
+ *   nanoclaw は skill 一覧を持たず、skillName の型も `z.string()` に緩和してある。
+ *   skill 解決と expose-to-nanoclaw allowlist 検証は deshi daemon 側 (SkillRegistry)
+ *   に委譲する (ADR-0009 passthrough)。
  *
  * channelContext の自動注入 (https://github.com/isbtty/deshi/issues/267):
  *   agent に channelContext を fabricate させると、formatter が routing
@@ -43,7 +37,6 @@
  *
  * Env:
  *   DESHI_HOST_URL                  (default: http://host.docker.internal:5180)
- *   DESHI_MCP_STARTUP_FETCH_TIMEOUT_MS (default: 5000) — startup skill list fetch 上限
  *   DESHI_INBOUND_DB_PATH           (default: /workspace/inbound.db) — session_routing 読み出し先
  */
 
@@ -53,10 +46,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
-const STARTUP_FETCH_TIMEOUT_MS = parseInt(
-  process.env.DESHI_MCP_STARTUP_FETCH_TIMEOUT_MS ?? '5000',
-  10,
-);
 
 function log(msg: string): void {
   console.error(`[DESHI] ${msg}`);
@@ -115,77 +104,6 @@ async function callHostTool(toolName: string, args: unknown): Promise<{
       isError: true,
     };
   }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Startup skill discovery — 起動時に 1 回 host-tools-server から
-// `daemon_list_skills` を呼んで、現時点の公開 skill 一覧を取得する。
-// 取れたら `daemon_run_skill` の description に埋め込んで agent が判断
-// しやすくする。取れなかった場合は generic description で fallback。
-// ─────────────────────────────────────────────────────────────
-
-export interface ExposedSkill {
-  name: string;
-  description: string;
-  argumentHint?: string;
-}
-
-export async function fetchSkillsAtStartup(
-  timeoutMs: number = STARTUP_FETCH_TIMEOUT_MS,
-): Promise<ExposedSkill[] | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await hostFetch('deshi_daemon_list_skills', {}, controller.signal);
-    if (!res.ok) {
-      log(`startup skill fetch: HTTP ${res.status}`);
-      return null;
-    }
-    const data = (await res.json()) as {
-      skills?: ExposedSkill[];
-    };
-    if (!Array.isArray(data.skills)) {
-      log(`startup skill fetch: unexpected body shape`);
-      return null;
-    }
-    log(`startup skill fetch: ${data.skills.length} skill(s)`);
-    return data.skills;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`startup skill fetch failed: ${message}`);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-export function buildRunSkillDescription(skills: ExposedSkill[] | null): string {
-  const intro =
-    'Submit a deshi skill for asynchronous execution. Returns a jobId; pair this call with daemon_poll_until_done to wait for the result. The deshi daemon enforces a server-side allowlist (SKILL.md `expose-to-nanoclaw: true`), so submissions that do not match return an error.';
-
-  if (!skills || skills.length === 0) {
-    return [
-      intro,
-      '',
-      'Currently exposed skills are unknown (startup discovery did not complete). Call `daemon_refresh_skills` first to populate the list, then pick a skillName from the result.',
-    ].join('\n');
-  }
-
-  const bullets = skills
-    .map((s) => {
-      const hint = s.argumentHint ? ` (args: ${s.argumentHint})` : '';
-      return `- ${s.name}${hint}: ${s.description}`;
-    })
-    .join('\n');
-
-  return [
-    intro,
-    '',
-    'Currently exposed skills:',
-    bullets,
-    '',
-    'If the user asks for a skill not in this list, call `daemon_refresh_skills` to re-fetch — a newer skill may have been added since startup.',
-  ].join('\n');
 }
 
 const server = new McpServer({
