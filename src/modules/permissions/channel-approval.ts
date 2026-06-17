@@ -19,7 +19,7 @@
  *
  * On connect (handler in index.ts):
  *   - Create `messaging_group_agents` with defaults
- *     (mention-sticky for groups / pattern='.' for DMs,
+ *     (mention for groups / pattern='.' for DMs,
  *      sender_scope='known', ignored_message_policy='accumulate')
  *   - Add the triggering sender to `agent_group_members` so sender_scope
  *     doesn't bounce the replayed message into a sender-approval cascade
