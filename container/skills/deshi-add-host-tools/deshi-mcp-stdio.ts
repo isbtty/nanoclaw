@@ -314,12 +314,14 @@ server.tool(
 //     - outputs/<YYYY-MM-DD>-<slug>/<filename>   (= deshi-generated artifacts)
 //
 //   Implementation: read `local_path` inside the container, compute sha256,
-//   base64-encode, and forward via host-tools-server. Host-tools-server's
-//   JSON body limit is 20 MiB, so the effective file-size cap here is ~14 MiB
-//   after base64 overhead. For larger files a multipart pipeline can be
-//   added later (out of scope for the initial push API).
+//   base64-encode, and forward via host-tools-server. The base64 body is
+//   bounded by host-tools-server's MAX_BODY_BYTES (150 MiB); the raw cap here
+//   is kept at ~1/1.37 of that to leave room for base64 overhead + JSON keys.
+//   This covers typical inbound chat attachments (e.g. a 54 MB PDF). For files
+//   beyond this a streaming multipart pipeline (MCP stdio → host-tools-server →
+//   daemon /files/upload) should replace base64-in-JSON; see follow-up.
 // ─────────────────────────────────────────────────────────────
-const MAX_PUSH_FILE_BYTES = 14 * 1024 * 1024; // 14 MiB raw → ~18.7 MiB base64
+const MAX_PUSH_FILE_BYTES = 100 * 1024 * 1024; // 100 MiB raw → ~133 MiB base64
 
 server.tool(
   'daemon_push_file_to_raw',
@@ -330,7 +332,7 @@ server.tool(
     '- inbox/<source>/<YYYY-MM-DD>/<filename>  — raw inbox staging for ingest',
     '- outputs/<YYYY-MM-DD>-<slug>/<filename>  — deshi-generated artifacts',
     '',
-    `Max raw file size for this call: ${MAX_PUSH_FILE_BYTES} bytes (~14 MiB). Larger files are rejected before transfer.`,
+    `Max raw file size for this call: ${MAX_PUSH_FILE_BYTES} bytes (~100 MiB). Larger files are rejected before transfer.`,
     '',
     'Outcome values in the response:',
     '- created           — first time write succeeded',
