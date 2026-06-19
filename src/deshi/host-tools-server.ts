@@ -62,12 +62,14 @@ function log(msg: string): void {
 }
 
 /**
- * inbound endpoint で添付ファイルを base64 inline で受ける運用を想定し、
- * 20 MiB まで許容する。超過時は途中で接続を切って reject する。
- * MCP-backed handler 側は元々こんなに大きい body を投げないため、
- * 上限値は共有で問題なし。
+ * inbound endpoint で添付ファイルを base64 inline で受ける運用と、
+ * daemon_push_file_to_raw が base64 化したファイルを転送する運用を想定し、
+ * 150 MiB まで許容する。超過時は途中で接続を切って reject する。
+ * これは deshi-mcp-stdio.ts の MAX_PUSH_FILE_BYTES (100 MiB raw) を base64
+ * (≈1.37x = ~133 MiB) + JSON キーで包んだサイズに収まるよう対で決めている。
+ * 上限値は両用途で共有。
  */
-const MAX_BODY_BYTES = 20 * 1024 * 1024;
+const MAX_BODY_BYTES = 150 * 1024 * 1024;
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
