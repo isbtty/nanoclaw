@@ -149,6 +149,20 @@ export interface ChatSdkBridgeConfig {
     rawFile: Record<string, unknown>,
   ) => Promise<{ data: Buffer; name?: string; mimeType?: string } | null>;
   /**
+   * Optional: derive richer inbound text from the raw platform event when the
+   * adapter's plain `text` omits content that lives in structured payloads.
+   * Needed for Slack Block Kit messages (e.g. Notion/automation notifications)
+   * whose `text` is only a one-line summary while the URLs and field values
+   * live in `blocks` — which the adapter drops. Receives the raw event and the
+   * current plain text; returns replacement text, or null to keep the original.
+   * May be async — e.g. Slack fetches the thread root via the Web API when the
+   * inbound message is a reply, so the root post's content travels with it.
+   */
+  enrichInboundText?: (
+    raw: Record<string, unknown>,
+    currentText: string,
+  ) => string | null | Promise<string | null>;
+  /**
    * Maximum text length the underlying adapter accepts in a single message.
    * When set, the bridge splits outbound text longer than this on paragraph
    * → line → hard-char boundaries and posts multiple messages. Without this,
@@ -281,6 +295,21 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       serialized.senderId = author.userId;
       serialized.sender = name;
       serialized.senderName = name;
+    }
+
+    // Enrich plain text from the raw event when the adapter's text dropped
+    // structured content (e.g. Slack Block Kit URLs/fields). Must run before
+    // raw is dropped below.
+    if (config.enrichInboundText && message.raw) {
+      try {
+        const enriched = await config.enrichInboundText(
+          message.raw as Record<string, unknown>,
+          (serialized.text as string) ?? '',
+        );
+        if (enriched) serialized.text = enriched;
+      } catch (err) {
+        log.warn('enrichInboundText failed', { err });
+      }
     }
 
     // Drop raw to save DB space (can be very large)
@@ -497,10 +526,18 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           return;
         }
         const options: NormalizedOption[] = normalizeOptions(content.options as never);
+        // Sanitize the card's free text the same way plain messages are (line
+        // ~480). Without this, dynamic content (e.g. a channel name with `_`)
+        // reaches Telegram's legacy-Markdown parser unsanitized and trips a
+        // "can't parse entities" error, dropping the whole card — including its
+        // buttons — so the approver never sees it. Button labels are not
+        // markdown-parsed by Telegram, so they're left untouched.
+        const safeTitle = transformText(title);
+        const safeQuestion = transformText(question);
         const card = Card({
-          title,
+          title: safeTitle,
           children: [
-            CardText(question),
+            CardText(safeQuestion),
             Actions(
               // Encode button id/value with the option index rather than the
               // full value. Telegram caps callback_data at 64 bytes, and
@@ -515,7 +552,7 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         });
         const result = await adapter.postMessage(tid, {
           card,
-          fallbackText: `${title}\n\n${question}\nOptions: ${options.map((o) => o.label).join(', ')}`,
+          fallbackText: `${safeTitle}\n\n${safeQuestion}\nOptions: ${options.map((o) => o.label).join(', ')}`,
         });
         return result?.id;
       }
