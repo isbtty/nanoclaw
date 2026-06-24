@@ -147,6 +147,10 @@ interface ChannelContext {
  * しない方針)。thread_id は thread を持たない channel (Telegram DM 等) では
  * 空文字 / null で書かれるのが正常系なので、その場合は threadId キー自体を
  * 付けずに返す (deshi #258 で threadId? optional 化済み)。
+ *
+ * session_routing.thread_id が空 (Slack group 等の channel 単位 session) の
+ * ときは、返信経路 (poll-loop.ts resolveDestinationThread) と同じく最新
+ * inbound メッセージの thread_id にフォールバックして threadId を揃える。
  */
 function readSessionRouting(): ChannelContext {
   const db = new Database(INBOUND_DB_PATH, { readonly: true });
@@ -170,7 +174,26 @@ function readSessionRouting(): ChannelContext {
       channel: row.channel_type,
       platformId: row.platform_id,
     };
-    if (row.thread_id) result.threadId = row.thread_id;
+    // session_routing.thread_id は channel 単位で書かれるため、Slack group の
+    // ような per-thread でない session では空になる。container 側の返信経路
+    // (poll-loop.ts resolveDestinationThread) は代わりに「同一 channel の最新
+    // inbound メッセージの thread_id」でスレッドに返す。host 側の中間 ack
+    // (post-deshi-ack) はこの channelContext.threadId しか参照しないので、
+    // session_routing が空のままだと ack だけ channel トップに落ち、最終回答
+    // はスレッドに付くという不一致が出る (isbtty/deshi#445 関連)。返信経路と
+    // 同じ source にフォールバックして threadId を揃える。
+    let threadId = row.thread_id || null;
+    if (!threadId) {
+      const inbound = db
+        .prepare(
+          `SELECT thread_id FROM messages_in
+           WHERE channel_type = ? AND platform_id = ? AND thread_id IS NOT NULL
+           ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(row.channel_type, row.platform_id) as { thread_id: string | null } | undefined;
+      if (inbound?.thread_id) threadId = inbound.thread_id;
+    }
+    if (threadId) result.threadId = threadId;
     return result;
   } finally {
     db.close();
