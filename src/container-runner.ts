@@ -434,6 +434,26 @@ async function buildContainerArgs(
   }
   log.info('OneCLI gateway applied', { containerName });
 
+  // host-local 宛は OneCLI gateway proxy を迂回させる。proxy(HTTP(S)_PROXY) +
+  // NODE_USE_ENV_PROXY=1 が注入されると、NO_PROXY 未設定では deshi host-tools
+  // (host.docker.internal:5180) への MCP 呼び出しまで proxy 経由になり失敗する
+  // (Bot が「deshi につながりません」と degraded 返答する原因)。proxy 自体は
+  // host.docker.internal:10255 に居るが NO_PROXY は per-target の迂回制御のみで
+  // proxy アドレスは無効化しないため、外部 API は引き続き gateway を通る。
+  // 最後に push することで onecli/provider が設定した同名 env より優先される。
+  const PROXY_BYPASS = ['host.docker.internal', 'localhost', '127.0.0.1'];
+  const inheritedNoProxy = providerContribution.env?.NO_PROXY ?? providerContribution.env?.no_proxy ?? '';
+  const noProxy = [
+    ...new Set([
+      ...inheritedNoProxy
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      ...PROXY_BYPASS,
+    ]),
+  ].join(',');
+  args.push('-e', `NO_PROXY=${noProxy}`, '-e', `no_proxy=${noProxy}`);
+
   // Host gateway
   args.push(...hostGatewayArgs());
 
