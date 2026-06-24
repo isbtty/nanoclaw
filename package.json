@@ -53,6 +53,7 @@
     "marked": "^18.0.4",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
+    "undici": "^6.24.1",
     "wechat-ilink-client": "^0.1.0"
   },
   "devDependencies": {

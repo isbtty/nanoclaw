@@ -12,6 +12,12 @@ import path from 'path';
 // The CLI flag --dns-result-order does not propagate into undici on Node 20.
 dns.setDefaultResultOrder('ipv4first');
 
+// Route undici/fetch name resolution through c-ares against public DNS so a
+// wedged macOS mDNSResponder (isbtty/deshi#457) cannot take down channel
+// delivery. Must run before any outbound fetch. See src/net/public-dns-dispatcher.ts.
+import { installPublicDnsDispatcher } from './net/public-dns-dispatcher.js';
+installPublicDnsDispatcher();
+
 import { backfillContainerConfigs } from './backfill-container-configs.js';
 import { DATA_DIR } from './config.js';
 import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js';
