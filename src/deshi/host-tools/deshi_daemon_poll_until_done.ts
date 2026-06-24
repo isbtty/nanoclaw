@@ -22,6 +22,8 @@
 import { postDeshiRunAck, type DeshiAckChannelContext } from '../post-deshi-ack.js';
 
 const DAEMON_RESTARTED_SENTINEL = 'daemon が再起動したため、この job の実行状態は失われました。';
+const JOB_EVICTED_ERROR =
+  'job evicted: deshi daemon にこの job が存在しません (実行枠の保持期限切れ等で消失)。再実行が必要です。';
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 分 (deshi daemon の job TTL = 15 分 + 余裕)
 const DEFAULT_RETRY_MS = 1000; // daemon が retryAfterMs を返さなかった時のフォールバック
 const MAX_RETRY_MS = 5000; // retryAfterMs が大きすぎる時の上限
@@ -60,6 +62,8 @@ export interface JobStatusResponse {
 export interface DaemonPollUntilDoneResponse extends JobStatusResponse {
   /** daemon 再起動 sentinel を検出した場合 true */
   daemonRestarted?: boolean;
+  /** GET /jobs が 404 を返した (job が daemon から evict された = 永続消失) 場合 true */
+  jobEvicted?: boolean;
   /** timeoutMs を超えた場合 true (status は最後に観測した pending のまま) */
   timedOut?: boolean;
   /** polling で発行した GET /jobs リクエストの総回数 (デバッグ用) */
@@ -103,6 +107,15 @@ export async function daemonPollUntilDoneHandler(body: unknown): Promise<DaemonP
     });
 
     if (!res.ok) {
+      // 404 = job が daemon から evict 済み (= 永続的に消失)。daemon の job 保持
+      // 期限切れ等で起こり、retry しても二度と現れない。transient error と区別し、
+      // throw せず terminal failed として即確定させる (isbtty/deshi#451)。throw すると
+      // 呼び出し側 (agent) が無限 retry / silent ack 連投する余地が残るため、
+      // 構造化した failed を 1 レスポンスで返して 1 サイクルで打ち切る。
+      if (res.status === 404) {
+        return { status: 'failed', success: false, error: JOB_EVICTED_ERROR, jobEvicted: true, pollCount };
+      }
+      // それ以外の non-2xx は daemon 一時不調等の transient とみなし従来通り throw。
       const text = await res.text();
       throw new Error(`deshi daemon /jobs failed: ${res.status} ${text}`);
     }

@@ -219,7 +219,7 @@ server.tool(
 // ─────────────────────────────────────────────────────────────
 server.tool(
   'deshi_run_poll',
-  'Wait for a job submitted via deshi_run_start to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion).',
+  'Wait for a job submitted via deshi_run_start to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion), jobEvicted (the daemon no longer has this job — it was dropped, e.g. its retention window expired; this is terminal, do NOT retry the same jobId — re-run from deshi_run_start if needed).',
   {
     jobId: z.string().describe('jobId returned by deshi_run_start'),
     timeoutMs: z
