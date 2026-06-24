@@ -239,16 +239,61 @@ describe('daemonPollUntilDoneHandler', () => {
     await expect(daemonPollUntilDoneHandler({ jobId: '' } as unknown)).rejects.toThrow(/jobId is required/);
   });
 
-  it('non-2xx の場合は throw する', async () => {
+  it('404 (job evicted) は throw せず terminal failed を返す (#451)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 404,
-      text: async () => 'job not found',
+      text: async () => '{"error":"job not found"}',
+    } as unknown as Response);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const res = await daemonPollUntilDoneHandler({ jobId: 'NOPE' });
+
+    expect(res.status).toBe('failed');
+    expect(res.success).toBe(false);
+    expect(res.jobEvicted).toBe(true);
+    expect(res.error).toMatch(/job evicted/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('pending を経た後の 404 でも terminal failed (jobEvicted) を返す', async () => {
+    vi.useFakeTimers();
+    let i = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      i++;
+      if (i <= 2) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'pending', retryAfterMs: 100 }),
+          text: async () => '',
+        } as unknown as Response;
+      }
+      return { ok: false, status: 404, text: async () => 'job not found' } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = daemonPollUntilDoneHandler({ jobId: 'JOB1' });
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(100);
+    const res = await promise;
+
+    expect(res.status).toBe('failed');
+    expect(res.jobEvicted).toBe(true);
+    // 2 回の pending poll をカウント済み (404 自体は pollCount に含めない)
+    expect(res.pollCount).toBe(2);
+  });
+
+  it('404 以外の non-2xx は terminal 化せず throw する (発生元へ即エラー告知)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => 'internal error',
     } as unknown as Response);
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await expect(daemonPollUntilDoneHandler({ jobId: 'NOPE' })).rejects.toThrow(
-      /deshi daemon \/jobs failed: 404 job not found/,
+      /deshi daemon \/jobs failed: 500 internal error/,
     );
   });
 });
