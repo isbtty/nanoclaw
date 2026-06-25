@@ -21,7 +21,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { getMessagingGroupByPlatform, getMessagingGroupAgents } from '../db/messaging-groups.js';
-import { resolveSession } from '../session-manager.js';
+import { resolveSession, outboundDbPath } from '../session-manager.js';
+import { openOutboundDbRw } from '../db/session-db.js';
 import { log } from '../log.js';
 import {
   SUPPORTS_THREADS,
@@ -40,6 +41,53 @@ const DEFAULT_ACK_TEXT = '確認しています。少々お待ちください �
 function ackText(): string {
   const t = process.env.DESHI_RUN_ACK_TEXT;
   return t && t.trim() !== '' ? t : DEFAULT_ACK_TEXT;
+}
+
+const DEFAULT_ACK_COOLDOWN_MS = 10 * 60 * 1000; // 同一 session+thread で ack を再送しない期間
+
+/**
+ * 中間 ack の重複抑止 cooldown (ms)。`deshi_daemon_poll_until_done` handler の
+ * `ackSent` フラグは 1 呼び出しスコープしか効かないため、agent が 1 発話に対し
+ * run_skill+poll を複数サイクル回す / 再 poll するたびに独立して ack が書かれ、
+ * ユーザーには同一 ack が連投される (isbtty/deshi#451)。session+thread 単位で
+ * 直近 cooldown 内に既存 ack があれば skip し、process 再起動も跨げるよう
+ * messages_out を参照して判定する。
+ */
+function ackCooldownMs(): number {
+  const raw = process.env.DESHI_RUN_ACK_COOLDOWN_MS;
+  if (!raw) return DEFAULT_ACK_COOLDOWN_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_ACK_COOLDOWN_MS;
+}
+
+/**
+ * 同一 session+thread で直近 cooldown 内に配信済みの `deshi-ack-*` 行があるか。
+ * messages_out.timestamp は `datetime('now')` (UTC text) で書かれるため、
+ * `datetime('now', '-N seconds')` と文字列比較できる。cooldown=0 のときは無効化
+ * (常に false = 抑止しない)。
+ */
+function hasRecentAck(agentGroupId: string, sessionId: string, threadId: string | null, cooldownMs: number): boolean {
+  if (cooldownMs <= 0) return false;
+  const db = openOutboundDbRw(outboundDbPath(agentGroupId, sessionId));
+  try {
+    const cutoff = `-${Math.ceil(cooldownMs / 1000)} seconds`;
+    const row = db
+      .prepare(
+        `SELECT 1 FROM messages_out
+         WHERE id LIKE 'deshi-ack-%'
+           AND (thread_id IS ? OR (thread_id IS NULL AND ? IS NULL))
+           AND timestamp >= datetime('now', ?)
+         LIMIT 1`,
+      )
+      .get(threadId, threadId, cutoff);
+    return row !== undefined;
+  } catch (err) {
+    // 判定 DB アクセスが失敗しても本体の ack を止めない (fail-open)
+    log.warn('hasRecentAck check failed', { err: String(err) });
+    return false;
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -72,6 +120,18 @@ export function postDeshiRunAck(ctx: DeshiAckChannelContext): boolean {
 
     const { session } = resolveSession(agent.agent_group_id, mg.id, ctx.threadId ?? null, effectiveSessionMode);
 
+    const threadId = ctx.threadId ?? session.thread_id ?? null;
+
+    // 同一 session+thread で直近 cooldown 内に ack 済みなら連投を抑止する (#451)。
+    if (hasRecentAck(agent.agent_group_id, session.id, threadId, ackCooldownMs())) {
+      log.info('postDeshiRunAck: suppressed duplicate ack (cooldown)', {
+        agentGroupId: agent.agent_group_id,
+        sessionId: session.id,
+        threadId,
+      });
+      return false;
+    }
+
     writeOutboundMessage({
       agentGroupId: agent.agent_group_id,
       sessionId: session.id,
@@ -79,7 +139,7 @@ export function postDeshiRunAck(ctx: DeshiAckChannelContext): boolean {
       kind: 'chat',
       platformId: mg.platform_id,
       channelType: mg.channel_type,
-      threadId: ctx.threadId ?? session.thread_id ?? null,
+      threadId,
       content: JSON.stringify({ text: ackText(), files: [] }),
     });
     return true;
