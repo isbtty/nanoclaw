@@ -44,6 +44,7 @@ import { Database } from 'bun:sqlite';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { shouldDedupeRunStart, armRunStartGuard, type LastRunStart } from './run-start-guard.js';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
 
@@ -219,11 +220,7 @@ function readSessionRouting(): ChannelContext {
 //   状態は module-level (= この session の container 内で持続)。container は 1
 //   session を扱うので session を跨がない。
 // ─────────────────────────────────────────────────────────────
-interface LastRunStart {
-  triggerSeq: number;
-  jobId: string;
-  threadId: string;
-}
+// 判定ロジックは run-start-guard.ts (純粋・単体テスト済) に切り出している。
 let lastRunStart: LastRunStart | null = null;
 
 /**
@@ -284,16 +281,17 @@ server.tool(
     } catch {
       triggerSeq = -1; // 読めなければガード無効化 (転送を許す)
     }
-    if (lastRunStart && triggerSeq >= 0 && triggerSeq === lastRunStart.triggerSeq) {
-      log(`run_start deduped: no new wake message since job ${lastRunStart.jobId} (triggerSeq=${triggerSeq})`);
+    const deduped = shouldDedupeRunStart(lastRunStart, triggerSeq);
+    if (deduped) {
+      log(`run_start deduped: no new wake message since job ${deduped.jobId} (triggerSeq=${triggerSeq})`);
       return {
         content: [
           {
             type: 'text' as const,
             text: JSON.stringify({
               ok: true,
-              jobId: lastRunStart.jobId,
-              threadId: lastRunStart.threadId,
+              jobId: deduped.jobId,
+              threadId: deduped.threadId,
               deduped: true,
               note:
                 '前回の run_start 以降に新しいユーザー発話がありません。新しい job は作成せず、進行中の既存 job を返しました。' +
@@ -307,18 +305,9 @@ server.tool(
 
     const res = await callHostTool('deshi_daemon_run_skill', { ...args, channelContext });
 
-    // 成功して jobId が取れたらガードを arm する。parse 失敗時 (=run 自体が失敗) は
-    // 更新しないので、次回も転送される (失敗を握り潰してガードに閉じ込めない)。
-    if (triggerSeq >= 0 && !res.isError) {
-      try {
-        const parsed = JSON.parse(res.content?.[0]?.text ?? '') as { ok?: boolean; jobId?: string; threadId?: string };
-        if (parsed?.ok && parsed.jobId) {
-          lastRunStart = { triggerSeq, jobId: parsed.jobId, threadId: parsed.threadId ?? '' };
-        }
-      } catch {
-        /* レスポンスが JSON でない (想定外) ときはガードを更新しない */
-      }
-    }
+    // 成功して jobId が取れたらガードを arm する。失敗/非 JSON 時は更新しないので
+    // 次回も転送される (失敗を握り潰してガードに閉じ込めない)。
+    lastRunStart = armRunStartGuard(lastRunStart, triggerSeq, res.content?.[0]?.text, res.isError ?? false);
     return res;
   },
 );
