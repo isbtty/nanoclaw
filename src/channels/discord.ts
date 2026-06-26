@@ -7,6 +7,7 @@ import { createDiscordAdapter } from '@chat-adapter/discord';
 import { readEnvFile } from '../env.js';
 import { createChatSdkBridge, type ReplyContext } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { createAdapterLogger } from './adapter-logger.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractReplyContext(raw: Record<string, any>): ReplyContext | null {
@@ -26,6 +27,7 @@ registerChannelAdapter('discord', {
       botToken: env.DISCORD_BOT_TOKEN,
       publicKey: env.DISCORD_PUBLIC_KEY,
       applicationId: env.DISCORD_APPLICATION_ID,
+      logger: createAdapterLogger('discord'),
     });
     return createChatSdkBridge({
       adapter: discordAdapter,

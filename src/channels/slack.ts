@@ -7,6 +7,7 @@ import { createSlackAdapter } from '@chat-adapter/slack';
 import { readEnvFile } from '../env.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { createAdapterLogger } from './adapter-logger.js';
 
 /** Slack mrkdwn → markdown: keep URLs (the whole point), unwrap entity tokens. */
 function slackMrkdwnToMarkdown(s: string): string {
@@ -15,9 +16,7 @@ function slackMrkdwnToMarkdown(s: string): string {
     .replace(/<(https?:\/\/[^<>]+)>/g, '$1') // <url> → url
     .replace(/<@[A-Z0-9_]+\|([^<>]+)>/g, '@$1')
     .replace(/<#[A-Z0-9_]+\|([^<>]+)>/g, '#$1')
-    .replace(/<!date\^(\d+)\^[^|>]*(?:\|[^>]*)?>/g, (_m, ts) =>
-      new Date(Number(ts) * 1000).toISOString(),
-    )
+    .replace(/<!date\^(\d+)\^[^|>]*(?:\|[^>]*)?>/g, (_m, ts) => new Date(Number(ts) * 1000).toISOString())
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
@@ -79,6 +78,7 @@ registerChannelAdapter('slack', {
     const slackAdapter = createSlackAdapter({
       botToken: env.SLACK_BOT_TOKEN,
       signingSecret: env.SLACK_SIGNING_SECRET,
+      logger: createAdapterLogger('slack'),
     });
     const botToken = env.SLACK_BOT_TOKEN;
     const bridge = createChatSdkBridge({

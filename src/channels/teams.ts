@@ -7,6 +7,7 @@ import { createTeamsAdapter } from '@chat-adapter/teams';
 import { readEnvFile } from '../env.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { createAdapterLogger } from './adapter-logger.js';
 
 registerChannelAdapter('teams', {
   factory: () => {
@@ -17,6 +18,7 @@ registerChannelAdapter('teams', {
       appPassword: env.TEAMS_APP_PASSWORD,
       appType: (env.TEAMS_APP_TYPE as 'SingleTenant' | 'MultiTenant') || undefined,
       appTenantId: env.TEAMS_APP_TENANT_ID || undefined,
+      logger: createAdapterLogger('teams'),
     });
     return createChatSdkBridge({ adapter: teamsAdapter, concurrency: 'concurrent', supportsThreads: true });
   },
