@@ -46,8 +46,16 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 - `status === "completed"` → `result` を整形して最終応答
 - `status === "failed"` →
   - `daemonRestarted === true`: 「deshi daemon が再起動したため中断されました。再実行しますか?」と提案
+  - `jobEvicted === true`: job が deshi 側で消失（保持期限切れ等）。**その旨を報告して止まる**。同じ jobId を poll し直さない。
   - そうでない: `error` をユーザーに伝える
 - `timedOut === true` → 「timeout しました (30 分超過)。後で結果を確認します」と応答
+
+**失敗・timeout の後に自分から `deshi_run_start` を投げ直さない（最重要）。**
+poll が `failed` / `jobEvicted` / `timedOut` を返したら、**その結果をユーザーに報告して 1 ターンで止まる**。
+「もう一度やってみよう」「文脈を盛り直して再委譲しよう」は禁止 — 同じ依頼を新しい input で `run_start`
+し直すと、deshi 側に新 job が毎回生まれて多重発火になる（input が膨らみながら何本も走る）。
+**再実行はユーザーが新しく明示的に依頼したときだけ**行う。失敗は握り潰さず、素直に「失敗しました／
+deshi 側で確認が必要です」と伝えるのが正しい挙動。
 
 ### やってはいけないこと
 
@@ -55,6 +63,7 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 - **Google 操作・wiki/ファイル検索を nanoclaw で直接やろうとする** → そのツールは存在しない。すべて `deshi_run_start`
 - `deshi_run_start` を呼ばずに `deshi_run_poll`: jobId が無くエラー
 - `deshi_run_poll` を自前で retry ループ: host 側で long polling 済み
+- **失敗/timeout の後に同じ依頼を `deshi_run_start` で投げ直す**: 多重発火の原因。報告して止まる（上の最重要ルール参照）。新しいユーザー発話が無いのに 2 本目の job を作らない。
 - `channelContext` を引数で渡す: schema に存在しない。自動注入される
 
 （添付ファイルの取り込み・配送は `daemon_push_file_to_raw` / `daemon_send_file_to_chat` を使う。詳細は `.claude-fragments/mcp-deshi.md`。）

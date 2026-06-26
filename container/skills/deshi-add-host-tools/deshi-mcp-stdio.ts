@@ -44,6 +44,7 @@ import { Database } from 'bun:sqlite';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { shouldDedupeRunStart, armRunStartGuard, type LastRunStart } from './run-start-guard.js';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
 
@@ -201,6 +202,46 @@ function readSessionRouting(): ChannelContext {
 }
 
 // ─────────────────────────────────────────────────────────────
+// run_start 多重発火ガード (isbtty/deshi#451 二次問題)
+//   症状: agent が 1 つのユーザー発話に対し deshi_run_start を投げ直し、毎回
+//   別の deshi job (別 threadId) が生まれて多重発火する (input が膨らみながら
+//   何本も走る)。失敗/未完を「もう一回」と誤解した自発再委譲が主因。
+//
+//   nanoclaw だけが「前回 run_start 以降に新しい wake 発話が来たか」を判定できる
+//   (deshi daemon は run 呼び出ししか見えず、引き金のユーザー発話を見られない)。
+//   そこで shim 側で構造的に抑止する:
+//     - messages_in.trigger=1 (= agent を起こした発話) の MAX(seq) を marker とする。
+//     - 直前の run_start 時の marker と同じ = 新しいユーザー発話が無い → 2 本目の
+//       run_start を deshi に転送せず、直前の job を返して「それを poll しろ」と誘導。
+//       deshi 側に新 job を作らせない。
+//     - 新しい wake 発話が来て marker が進めば、正当な新規依頼として通す。
+//   これにより「ユーザーが明示的に再依頼したケース」(marker 前進) は誤抑止しない。
+//
+//   状態は module-level (= この session の container 内で持続)。container は 1
+//   session を扱うので session を跨がない。
+// ─────────────────────────────────────────────────────────────
+// 判定ロジックは run-start-guard.ts (純粋・単体テスト済) に切り出している。
+let lastRunStart: LastRunStart | null = null;
+
+/**
+ * agent を起こした発話 (messages_in.trigger=1) の MAX(seq) を返す。新しいユーザー
+ * 発話が来たかどうかの marker。読めない場合は -1 (ガードを無効化し転送を許す)。
+ */
+function readMaxTriggerSeq(): number {
+  const db = new Database(INBOUND_DB_PATH, { readonly: true });
+  db.exec('PRAGMA busy_timeout = 5000');
+  db.exec('PRAGMA mmap_size = 0');
+  try {
+    const row = db.prepare('SELECT MAX(seq) AS m FROM messages_in WHERE trigger = 1').get() as
+      | { m: number | null }
+      | undefined;
+    return row?.m ?? 0;
+  } finally {
+    db.close();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // daemon_run_skill — deshi daemon に skill 実行を依頼 (POST /run)
 //   description に起動時に取得した skill 一覧を埋め込む。
 //   skillName 型は z.string() に緩和し、本物の allowlist 検証は
@@ -231,7 +272,43 @@ server.tool(
         isError: true,
       };
     }
-    return callHostTool('deshi_daemon_run_skill', { ...args, channelContext });
+
+    // 多重発火ガード (#451 二次): 前回 run_start 以降に新しい wake 発話が無いまま
+    // 2 本目の run_start が来たら、新 job を作らず直前の job を返して poll に誘導する。
+    let triggerSeq: number;
+    try {
+      triggerSeq = readMaxTriggerSeq();
+    } catch {
+      triggerSeq = -1; // 読めなければガード無効化 (転送を許す)
+    }
+    const deduped = shouldDedupeRunStart(lastRunStart, triggerSeq);
+    if (deduped) {
+      log(`run_start deduped: no new wake message since job ${deduped.jobId} (triggerSeq=${triggerSeq})`);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              ok: true,
+              jobId: deduped.jobId,
+              threadId: deduped.threadId,
+              deduped: true,
+              note:
+                '前回の run_start 以降に新しいユーザー発話がありません。新しい job は作成せず、進行中の既存 job を返しました。' +
+                'これを deshi_run_poll で待ってください。既に失敗していた場合は結果をユーザーに報告し、' +
+                'ユーザーが新しく明示的に依頼するまで run_start を投げ直さないでください。',
+            }),
+          },
+        ],
+      };
+    }
+
+    const res = await callHostTool('deshi_daemon_run_skill', { ...args, channelContext });
+
+    // 成功して jobId が取れたらガードを arm する。失敗/非 JSON 時は更新しないので
+    // 次回も転送される (失敗を握り潰してガードに閉じ込めない)。
+    lastRunStart = armRunStartGuard(lastRunStart, triggerSeq, res.content?.[0]?.text, res.isError ?? false);
+    return res;
   },
 );
 

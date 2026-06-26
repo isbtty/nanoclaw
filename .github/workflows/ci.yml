@@ -37,3 +37,7 @@ jobs:
       - name: Container tests
         working-directory: container/agent-runner
         run: bun test
+
+      - name: Deshi shim tests
+        working-directory: container/skills/deshi-add-host-tools
+        run: bun test
