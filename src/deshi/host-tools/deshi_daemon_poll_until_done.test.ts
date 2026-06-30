@@ -4,6 +4,7 @@ vi.mock('../post-deshi-ack.js', () => ({ postDeshiRunAck: vi.fn(() => true) }));
 
 import { daemonPollUntilDoneHandler, type JobStatusResponse } from './deshi_daemon_poll_until_done.js';
 import { postDeshiRunAck } from '../post-deshi-ack.js';
+import { _resetAckCacheForTests, putJobAck } from '../ack-cache.js';
 
 const DAEMON_RESTARTED_SENTINEL = 'daemon が再起動したため、この job の実行状態は失われました。';
 const CHANNEL_CTX = { channel: 'telegram', platformId: 'tg-1', threadId: 'thr-1' };
@@ -32,6 +33,7 @@ describe('daemonPollUntilDoneHandler', () => {
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
     vi.mocked(postDeshiRunAck).mockClear();
+    _resetAckCacheForTests();
   });
 
   afterEach(() => {
@@ -84,7 +86,8 @@ describe('daemonPollUntilDoneHandler', () => {
 
       expect(res.status).toBe('completed');
       expect(postDeshiRunAck).toHaveBeenCalledTimes(1);
-      expect(postDeshiRunAck).toHaveBeenCalledWith(CHANNEL_CTX);
+      // haiku 要約は putJobAck されていないので overrideText は undefined
+      expect(postDeshiRunAck).toHaveBeenCalledWith(CHANNEL_CTX, undefined);
     });
 
     it('channelContext が無ければ slow でも ack を出さない', async () => {
@@ -103,6 +106,66 @@ describe('daemonPollUntilDoneHandler', () => {
       await promise;
 
       expect(postDeshiRunAck).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('中間 ack 動的化 (haiku 要約の override)', () => {
+    it('haiku 要約 (ack-cache) があれば overrideText として渡す', async () => {
+      vi.useFakeTimers();
+      process.env.DESHI_RUN_ACK_THRESHOLD_MS = '50';
+      putJobAck('JOB2', '資料を作ってます ✏️');
+
+      const fetchMock = mockResponseSequence([
+        { status: 'pending', retryAfterMs: 100 },
+        { status: 'pending', retryAfterMs: 100 },
+        { status: 'completed', success: true },
+      ]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const promise = daemonPollUntilDoneHandler({ jobId: 'JOB2', channelContext: CHANNEL_CTX });
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+      await promise;
+
+      expect(postDeshiRunAck).toHaveBeenCalledTimes(1);
+      expect(postDeshiRunAck).toHaveBeenCalledWith(CHANNEL_CTX, '資料を作ってます ✏️');
+    });
+
+    it('postDeshiRunAck が cooldown で suppress (false) を返した場合、次 poll で要約到着後にリトライする', async () => {
+      vi.useFakeTimers();
+      process.env.DESHI_RUN_ACK_THRESHOLD_MS = '50';
+      // postDeshiRunAck の挙動を実装に合わせて模倣する:
+      // - override 無し + cooldown 内: false (suppress)
+      // - override 有り: true (送信)
+      vi.mocked(postDeshiRunAck).mockImplementation((_ctx, overrideText) => {
+        return !!(overrideText && overrideText.trim() !== '');
+      });
+
+      let pollNo = 0;
+      const fetchMock = vi.fn().mockImplementation(async () => {
+        pollNo++;
+        // 3 回目の poll で haiku 要約が到着
+        if (pollNo === 3) putJobAck('JOB2', '田中さんを調べてます 🔎');
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            pollNo >= 5 ? { status: 'completed', success: true } : { status: 'pending', retryAfterMs: 100 },
+          text: async () => '',
+        } as unknown as Response;
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const promise = daemonPollUntilDoneHandler({ jobId: 'JOB2', channelContext: CHANNEL_CTX });
+      for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(100);
+      await promise;
+
+      // 要約到着前の poll は postDeshiRunAck が false を返すので何度か空打ちされ、
+      // 要約到着後に override 付きで送信成功 → 最後の呼び出しは override 引数を持つ
+      const calls = vi.mocked(postDeshiRunAck).mock.calls;
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toEqual([CHANNEL_CTX, '田中さんを調べてます 🔎']);
     });
   });
 

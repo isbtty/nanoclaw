@@ -95,9 +95,12 @@ function hasRecentAck(agentGroupId: string, sessionId: string, threadId: string 
  * polling が pickup して channel に配信する。失敗は throw せず warn ログのみ
  * (ack 配信失敗で本体の polling を止めない)。
  *
+ * @param overrideText 任意の動的 ack 文 (例: haiku 要約結果)。空でなければ
+ *   DEFAULT_ACK_TEXT / 環境変数より優先される。連投時に「何をやっているか」を
+ *   ユーザーに見せるための差し替え経路。
  * @returns 書き込めたら true、session 解決失敗等で skip したら false
  */
-export function postDeshiRunAck(ctx: DeshiAckChannelContext): boolean {
+export function postDeshiRunAck(ctx: DeshiAckChannelContext, overrideText?: string): boolean {
   try {
     const mg = getMessagingGroupByPlatform(ctx.channel, ctx.platformId);
     if (!mg) {
@@ -123,7 +126,14 @@ export function postDeshiRunAck(ctx: DeshiAckChannelContext): boolean {
     const threadId = ctx.threadId ?? session.thread_id ?? null;
 
     // 同一 session+thread で直近 cooldown 内に ack 済みなら連投を抑止する (#451)。
-    if (hasRecentAck(agent.agent_group_id, session.id, threadId, ackCooldownMs())) {
+    // ただし overrideText (= haiku 等で生成した動的 ack 文) が指定されている場合は、
+    // 連投ではなく「今何をやっているかをユーザーに見せたい」意図と判定して送信する。
+    // これにより:
+    //   - 1 ターン目 1 個目: 定型を即送信 (cooldown 内 ack 無し → 送信 OK)
+    //   - 1 ターン目 2 個目以降: cooldown 内 ack 済だが override 有り → 動的 ack を送信
+    //   - 1 ターン目 2 個目以降で override 未指定: cooldown で suppress (連投防止)
+    const hasOverride = !!(overrideText && overrideText.trim() !== '');
+    if (!hasOverride && hasRecentAck(agent.agent_group_id, session.id, threadId, ackCooldownMs())) {
       log.info('postDeshiRunAck: suppressed duplicate ack (cooldown)', {
         agentGroupId: agent.agent_group_id,
         sessionId: session.id,
@@ -140,7 +150,10 @@ export function postDeshiRunAck(ctx: DeshiAckChannelContext): boolean {
       platformId: mg.platform_id,
       channelType: mg.channel_type,
       threadId,
-      content: JSON.stringify({ text: ackText(), files: [] }),
+      content: JSON.stringify({
+        text: hasOverride ? overrideText!.trim() : ackText(),
+        files: [],
+      }),
     });
     return true;
   } catch (err) {
