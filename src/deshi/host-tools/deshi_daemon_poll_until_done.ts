@@ -19,6 +19,7 @@
  *   prompt 依存だった中間返信を LLM 非依存で保証するための構造対応。
  */
 
+import { forgetJob, getJobAck } from '../ack-cache.js';
 import { postDeshiRunAck, type DeshiAckChannelContext } from '../post-deshi-ack.js';
 
 const DAEMON_RESTARTED_SENTINEL = 'daemon が再起動したため、この job の実行状態は失われました。';
@@ -125,14 +126,30 @@ export async function daemonPollUntilDoneHandler(body: unknown): Promise<DaemonP
 
     if (lastData.status !== 'pending') {
       const daemonRestarted = lastData.status === 'failed' && lastData.error === DAEMON_RESTARTED_SENTINEL;
+      // job 終了で動的 ack キャッシュは不要 — 早めに開放
+      forgetJob(req.jobId);
       return { ...lastData, daemonRestarted, pollCount };
     }
 
-    // 中間 ack: 閾値秒を超えて pending のとき 1 回だけ「確認しています」を配信
-    // (#423)。fast job はこの分岐前に terminal を返すので ack は出ない。
+    // 中間 ack: 閾値秒を超えて pending のとき 1 回 (もしくは要約到着で動的化された
+    // 1 回) を配信する。
+    // session+thread 単位の連投抑止 (cooldown) は postDeshiRunAck 内 (sqlite) が
+    // 担うので、ここでは単純に「haiku 要約があれば override で渡す」だけにする。
+    // - 1 回目 (cooldown 内 ack 無し): override の有無に関係なく送信される
+    //   - 要約が間に合ってれば dynamic ack、間に合ってなければ定型 ack
+    // - 2 回目以降 (cooldown 内 ack 済): override 有りなら送信、無しなら suppress
+    //   - 連投の定型 ack は cooldown で黙る、動的 ack だけが通る
     if (!ackSent && req.channelContext && Date.now() - startedAt >= ackAfter) {
-      ackSent = postDeshiRunAck(req.channelContext) || ackSent;
-      ackSent = true; // 解決失敗でも再試行しない (連投防止)
+      const dynamic = getJobAck(req.jobId);
+      const delivered = postDeshiRunAck(req.channelContext, dynamic);
+      if (delivered || dynamic) {
+        // delivered=true (実送信) もしくは override 渡したのに cooldown 内で
+        // suppress された (= 設計通り) なら、このサイクルでは ack 確定とする。
+        ackSent = true;
+      }
+      // それ以外 (override 無し かつ cooldown 内で suppress) は次 poll で再挑戦。
+      // run_skill 後の haiku 要約が間に合ってないだけのケースで、後続 poll で
+      // 要約が到着した瞬間に動的 ack に置き換わる。
     }
 
     // pending: retryAfterMs を尊重して sleep
@@ -143,6 +160,7 @@ export async function daemonPollUntilDoneHandler(body: unknown): Promise<DaemonP
     await sleep(Math.min(wait, remaining));
   }
 
-  // timeout: 最後の pending を返す
+  // timeout: 最後の pending を返す。動的 ack キャッシュは TTL に任せて触らない
+  // (poll が再開されたとき同 jobId でまだ使える可能性があるため)。
   return { ...lastData, timedOut: true, pollCount };
 }
