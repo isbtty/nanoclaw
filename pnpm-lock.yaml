@@ -83,6 +83,9 @@ importers:
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
+      undici:
+        specifier: ^6.24.1
+        version: 6.24.1
       wechat-ilink-client:
         specifier: ^0.1.0
         version: 0.1.0
