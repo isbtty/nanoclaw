@@ -131,29 +131,51 @@ async function tellDm(dm: MessagingGroup, text: string): Promise<void> {
  *  orchestrates running feedback-gh internally (the "worker-skill 直叩き" pattern,
  *  isbtty/deshi ADR-0010).
  *
- *  We re-derive the owner DM via pickApprovalDelivery rather than trusting the
- *  approval context: ctx.userId is the bare platform id (no namespace) so
- *  ensureUserDm can't resolve it, and ctx.notify writes to the agent's own
- *  session — which surfaces in the agent's customer-facing chat, not the owner's
- *  DM. All status/output here must land in the owner DM instead. */
-registerApprovalHandler(ACTION, async ({ session, payload }) => {
-  const reason = String(payload.reason ?? 'permanent');
-  const cls = String(payload.errorClass ?? 'Error');
-  const channelType = String(payload.channelType ?? '');
-  const messageId = String(payload.messageId ?? '');
+ *  Registered `selfRouted` so this handler runs for BOTH approve and reject and
+ *  owns all response notification. We re-derive the owner DM via
+ *  pickApprovalDelivery rather than trusting the approval context: ctx.userId is
+ *  the bare platform id (no namespace) so ensureUserDm can't resolve it, and
+ *  ctx.notify writes to the agent's own session — which surfaces in the agent's
+ *  customer-facing chat, not the owner's DM. All status/output here lands in the
+ *  owner DM instead. */
+registerApprovalHandler(
+  ACTION,
+  async ({ session, payload, decision }) => {
+    const target = await pickApprovalDelivery(pickApprover(session.agent_group_id), '');
+    if (!target) {
+      log.warn('delivery-notify: approve handler — no reachable approver DM', {
+        agentGroupId: session.agent_group_id,
+      });
+      return;
+    }
+    const dm = target.messagingGroup;
 
-  const target = await pickApprovalDelivery(pickApprover(session.agent_group_id), '');
-  if (!target) {
-    log.warn('delivery-notify: approve handler — no reachable approver DM', {
-      agentGroupId: session.agent_group_id,
-    });
-    return;
-  }
-  const dm = target.messagingGroup;
+    if (decision === 'reject') {
+      await tellDm(dm, '調査リクエストを却下しました。');
+      return;
+    }
 
+    const reason = String(payload.reason ?? 'permanent');
+    const cls = String(payload.errorClass ?? 'Error');
+    const channelType = String(payload.channelType ?? '');
+    const messageId = String(payload.messageId ?? '');
+
+    await runInvestigation(dm, { reason, cls, channelType, messageId });
+  },
+  { selfRouted: true },
+);
+
+/** Ask deshi-general to open a GitHub issue for the failure; status → owner DM.
+ *  Routed through /deshi-general (not /deshi-feedback-gh directly): feedback-gh
+ *  is not exposed to nanoclaw (`expose-to-nanoclaw: false`) so a direct /run is
+ *  rejected; deshi-general IS exposed and orchestrates feedback-gh internally. */
+async function runInvestigation(
+  dm: MessagingGroup,
+  f: { reason: string; cls: string; channelType: string; messageId: string },
+): Promise<void> {
   const input =
     `/deshi-general nanoclaw の配送が dead-letter しました` +
-    `（reason=${reason} errorClass=${cls} channel=${channelType} messageId=${messageId}）。` +
+    `（reason=${f.reason} errorClass=${f.cls} channel=${f.channelType} messageId=${f.messageId}）。` +
     `/deshi-feedback-gh を実行して、この配送障害を GitHub issue として起票してください。`;
 
   const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
@@ -175,4 +197,4 @@ registerApprovalHandler(ACTION, async ({ session, payload }) => {
     log.error('delivery-notify: deshi /run failed', { err });
     await tellDm(dm, '調査スキルの起動に失敗しました（deshi daemon に接続できません）。');
   }
-});
+}

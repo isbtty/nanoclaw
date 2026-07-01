@@ -19,7 +19,7 @@ import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { PendingApproval } from '../../types.js';
 import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
-import { getApprovalHandler } from './primitive.js';
+import { getApprovalHandler, isSelfRoutedApproval } from './primitive.js';
 
 export async function handleApprovalsResponse(payload: ResponsePayload): Promise<boolean> {
   // OneCLI credential approvals — resolved via in-memory Promise first.
@@ -69,16 +69,34 @@ async function handleRegisteredApproval(
     });
   };
 
-  if (selectedOption !== 'approve') {
-    notify(`Your ${approval.action} request was rejected by admin.`);
+  const handler = getApprovalHandler(approval.action);
+  const selfRouted = handler != null && isSelfRoutedApproval(approval.action);
+  const decision = selectedOption === 'approve' ? 'approve' : 'reject';
+  const payload = safeParsePayload(approval.payload);
+
+  if (decision === 'reject') {
+    if (selfRouted) {
+      // The handler owns reject notification (routes to the approver, not the
+      // agent). No agent notify / wakeContainer.
+      try {
+        await handler!({ session, payload, userId, notify, decision });
+      } catch (err) {
+        log.error('Approval reject handler threw', {
+          approvalId: approval.approval_id,
+          action: approval.action,
+          err,
+        });
+      }
+    } else {
+      notify(`Your ${approval.action} request was rejected by admin.`);
+    }
     log.info('Approval rejected', { approvalId: approval.approval_id, action: approval.action, userId });
     deletePendingApproval(approval.approval_id);
-    await wakeContainer(session);
+    if (!selfRouted) await wakeContainer(session);
     return;
   }
 
   // Approved — dispatch to the module that registered for this action.
-  const handler = getApprovalHandler(approval.action);
   if (!handler) {
     log.warn('No approval handler registered — row dropped', {
       approvalId: approval.approval_id,
@@ -90,17 +108,28 @@ async function handleRegisteredApproval(
     return;
   }
 
-  const payload = JSON.parse(approval.payload);
   try {
-    await handler({ session, payload, userId, notify });
+    await handler({ session, payload, userId, notify, decision });
     log.info('Approval handled', { approvalId: approval.approval_id, action: approval.action, userId });
   } catch (err) {
     log.error('Approval handler threw', { approvalId: approval.approval_id, action: approval.action, err });
-    notify(
-      `Your ${approval.action} was approved, but applying it failed: ${err instanceof Error ? err.message : String(err)}.`,
-    );
+    // For self-routed actions the handler owns its own error surface; core must
+    // not fall back to an agent notify (which surfaces in the agent's chat).
+    if (!selfRouted) {
+      notify(
+        `Your ${approval.action} was approved, but applying it failed: ${err instanceof Error ? err.message : String(err)}.`,
+      );
+    }
   }
 
   deletePendingApproval(approval.approval_id);
-  await wakeContainer(session);
+  if (!selfRouted) await wakeContainer(session);
+}
+
+function safeParsePayload(raw: string): Record<string, unknown> {
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }

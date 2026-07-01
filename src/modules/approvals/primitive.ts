@@ -50,21 +50,47 @@ export interface ApprovalHandlerContext {
   userId: string;
   /** Send a system chat message to the requesting agent's session. */
   notify: (text: string) => void;
+  /**
+   * The admin's decision. Only handlers registered with `selfRouted: true` are
+   * invoked for both 'approve' and 'reject'; the default (agent-initiated)
+   * handlers are only ever called with 'approve'.
+   */
+  decision: 'approve' | 'reject';
 }
 
 export type ApprovalHandler = (ctx: ApprovalHandlerContext) => Promise<void>;
 
-const approvalHandlers = new Map<string, ApprovalHandler>();
+export interface ApprovalHandlerOptions {
+  /**
+   * Route the response back to the approver, not the requesting agent. When
+   * true, the handler is invoked for BOTH approve and reject and owns all
+   * response notification; core skips its default agent notify + wakeContainer
+   * (which surface in the agent's own chat). Use for system-initiated approvals
+   * whose card was delivered to an owner/admin DM rather than spawned from an
+   * agent conversation.
+   */
+  selfRouted?: boolean;
+}
 
-export function registerApprovalHandler(action: string, handler: ApprovalHandler): void {
+const approvalHandlers = new Map<string, ApprovalHandler>();
+const selfRoutedActions = new Set<string>();
+
+export function registerApprovalHandler(action: string, handler: ApprovalHandler, opts?: ApprovalHandlerOptions): void {
   if (approvalHandlers.has(action)) {
     log.warn('Approval handler re-registered (overwriting)', { action });
   }
   approvalHandlers.set(action, handler);
+  if (opts?.selfRouted) selfRoutedActions.add(action);
 }
 
 export function getApprovalHandler(action: string): ApprovalHandler | undefined {
   return approvalHandlers.get(action);
+}
+
+/** True when the action's handler owns its own response routing (approve AND
+ *  reject), so core should not fall back to agent notify + wakeContainer. */
+export function isSelfRoutedApproval(action: string): boolean {
+  return selfRoutedActions.has(action);
 }
 
 // ── Approver picking ──

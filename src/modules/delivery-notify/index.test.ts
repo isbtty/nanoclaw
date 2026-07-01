@@ -115,6 +115,7 @@ describe('delivery-notify — approval handler', () => {
     await h.approvalHandler!({
       session: { agent_group_id: 'ag-1' },
       payload: { reason: 'permanent', errorClass: 'ValidationError', channelType: 'telegram', messageId: 'out-1' },
+      decision: 'approve',
     });
 
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
@@ -137,6 +138,7 @@ describe('delivery-notify — approval handler', () => {
     await h.approvalHandler!({
       session: { agent_group_id: 'ag-1' },
       payload: { reason: 'permanent', errorClass: 'ValidationError', channelType: 'telegram', messageId: 'out-1' },
+      decision: 'approve',
     });
 
     // The status line is delivered to the owner DM via the delivery adapter,
@@ -152,9 +154,26 @@ describe('delivery-notify — approval handler', () => {
     await h.approvalHandler!({
       session: { agent_group_id: 'ag-1' },
       payload: { reason: 'permanent', errorClass: 'ValidationError', channelType: 'telegram', messageId: 'out-1' },
+      decision: 'approve',
     });
 
     expect(fetch as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
     expect(h.deliver).not.toHaveBeenCalled();
+  });
+
+  it('on reject, acknowledges to the owner DM and does not run the skill', async () => {
+    await h.approvalHandler!({
+      session: { agent_group_id: 'ag-1' },
+      payload: { reason: 'permanent', errorClass: 'ValidationError', channelType: 'telegram', messageId: 'out-1' },
+      decision: 'reject',
+    });
+
+    // No investigation run on reject.
+    expect(fetch as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    // Reject acknowledgment goes to the owner DM, not the agent session.
+    expect(h.deliver).toHaveBeenCalledTimes(1);
+    const call = h.deliver.mock.calls[0]!;
+    expect(call[1]).toBe('telegram:owner');
+    expect(JSON.parse(call[4] as string).text).toContain('却下');
   });
 });
