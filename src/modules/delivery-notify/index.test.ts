@@ -12,7 +12,11 @@ const h = vi.hoisted(() => ({
   approvalHandler: null as null | ((ctx: unknown) => Promise<void>),
   requestApproval: vi.fn(async (..._args: unknown[]) => {}),
   deliver: vi.fn(async (..._args: unknown[]) => 'plat'),
-  ensureUserDm: vi.fn(async () => ({ channel_type: 'telegram', platform_id: 'telegram:owner' })),
+  pickApprover: vi.fn((..._args: unknown[]) => ['telegram:owner']),
+  pickApprovalDelivery: vi.fn(async (..._args: unknown[]) => ({
+    userId: 'telegram:owner',
+    messagingGroup: { channel_type: 'telegram', platform_id: 'telegram:owner' },
+  })),
   getAgentGroup: vi.fn(() => ({ name: 'Test Agent' })),
 }));
 
@@ -24,11 +28,12 @@ vi.mock('../../delivery.js', () => ({
 }));
 vi.mock('../approvals/primitive.js', () => ({
   requestApproval: h.requestApproval,
+  pickApprover: h.pickApprover,
+  pickApprovalDelivery: h.pickApprovalDelivery,
   registerApprovalHandler: (_action: string, handler: (ctx: unknown) => Promise<void>) => {
     h.approvalHandler = handler;
   },
 }));
-vi.mock('../permissions/user-dm.js', () => ({ ensureUserDm: h.ensureUserDm }));
 vi.mock('../../db/agent-groups.js', () => ({ getAgentGroup: h.getAgentGroup }));
 vi.mock('../../log.js', () => ({ log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
@@ -97,12 +102,10 @@ describe('delivery-notify — onDeadLetter', () => {
 });
 
 describe('delivery-notify — approval handler', () => {
-  it('runs /deshi-feedback-gh with the failure summary on approve', async () => {
-    const notify = vi.fn();
+  it('runs /deshi-feedback-gh routed to the re-derived owner DM on approve', async () => {
     await h.approvalHandler!({
+      session: { agent_group_id: 'ag-1' },
       payload: { reason: 'permanent', errorClass: 'ValidationError', channelType: 'telegram', messageId: 'out-1' },
-      userId: 'telegram:owner',
-      notify,
     });
 
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
@@ -113,19 +116,33 @@ describe('delivery-notify — approval handler', () => {
     expect(body.input).toContain('/deshi-feedback-gh');
     expect(body.input).toContain('ValidationError');
     expect(body.input).toContain('out-1');
+    // Output routed to the owner DM (from pickApprovalDelivery), not a bare userId.
     expect(body.channelContext.platformId).toBe('telegram:owner');
   });
 
-  it('skips the skill run when the approver has no reachable DM', async () => {
-    h.ensureUserDm.mockResolvedValueOnce(null as never);
-    const notify = vi.fn();
+  it('on /run failure, reports to the owner DM (not the agent session)', async () => {
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: false, status: 502 } as never);
     await h.approvalHandler!({
+      session: { agent_group_id: 'ag-1' },
       payload: { reason: 'permanent', errorClass: 'ValidationError', channelType: 'telegram', messageId: 'out-1' },
-      userId: 'telegram:nobody',
-      notify,
+    });
+
+    // The status line is delivered to the owner DM via the delivery adapter,
+    // never through the agent's session (which would surface in a customer chat).
+    expect(h.deliver).toHaveBeenCalledTimes(1);
+    const call = h.deliver.mock.calls[0]!;
+    expect(call[1]).toBe('telegram:owner'); // platformId arg
+    expect(JSON.parse(call[4] as string).text).toContain('起動に失敗');
+  });
+
+  it('skips the skill run when no approver DM is reachable', async () => {
+    h.pickApprovalDelivery.mockResolvedValueOnce(null as never);
+    await h.approvalHandler!({
+      session: { agent_group_id: 'ag-1' },
+      payload: { reason: 'permanent', errorClass: 'ValidationError', channelType: 'telegram', messageId: 'out-1' },
     });
 
     expect(fetch as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining('DM 宛先'));
+    expect(h.deliver).not.toHaveBeenCalled();
   });
 });

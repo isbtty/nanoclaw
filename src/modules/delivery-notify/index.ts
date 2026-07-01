@@ -23,8 +23,13 @@
 import { onDeadLetter, getDeliveryAdapter, type DeadLetterEvent } from '../../delivery.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
-import { requestApproval, registerApprovalHandler } from '../approvals/primitive.js';
-import { ensureUserDm } from '../permissions/user-dm.js';
+import {
+  requestApproval,
+  registerApprovalHandler,
+  pickApprover,
+  pickApprovalDelivery,
+} from '../approvals/primitive.js';
+import type { MessagingGroup } from '../../types.js';
 
 const ACTION = 'investigate_delivery_failure';
 const NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
@@ -98,19 +103,39 @@ async function apologizeToChat(ev: DeadLetterEvent): Promise<void> {
   }
 }
 
+/** Deliver a status line to a specific DM (the owner's), best-effort. */
+async function tellDm(dm: MessagingGroup, text: string): Promise<void> {
+  const adapter = getDeliveryAdapter();
+  if (!adapter) return;
+  try {
+    await adapter.deliver(dm.channel_type, dm.platform_id, null, 'chat-sdk', JSON.stringify({ text }));
+  } catch (err) {
+    log.warn('delivery-notify: status DM failed (best-effort)', { err });
+  }
+}
+
 /** On approve, run /deshi-feedback-gh to open a GitHub issue for the failure.
- *  Output is routed to the approving admin's DM. */
-registerApprovalHandler(ACTION, async ({ payload, userId, notify }) => {
+ *  Output routes to the owner's DM.
+ *
+ *  We re-derive the owner DM via pickApprovalDelivery rather than trusting the
+ *  approval context: ctx.userId is the bare platform id (no namespace) so
+ *  ensureUserDm can't resolve it, and ctx.notify writes to the agent's own
+ *  session — which surfaces in the agent's customer-facing chat, not the owner's
+ *  DM. All status/output here must land in the owner DM instead. */
+registerApprovalHandler(ACTION, async ({ session, payload }) => {
   const reason = String(payload.reason ?? 'permanent');
   const cls = String(payload.errorClass ?? 'Error');
   const channelType = String(payload.channelType ?? '');
   const messageId = String(payload.messageId ?? '');
 
-  const dm = await ensureUserDm(userId);
-  if (!dm) {
-    notify('調査スキルを起動できませんでした（承認者の DM 宛先が見つかりません）。');
+  const target = await pickApprovalDelivery(pickApprover(session.agent_group_id), '');
+  if (!target) {
+    log.warn('delivery-notify: approve handler — no reachable approver DM', {
+      agentGroupId: session.agent_group_id,
+    });
     return;
   }
+  const dm = target.messagingGroup;
 
   const input =
     `/deshi-feedback-gh delivery nanoclaw の配送が dead-letter しました。` +
@@ -128,12 +153,12 @@ registerApprovalHandler(ACTION, async ({ payload, userId, notify }) => {
       }),
     });
     if (!res.ok) {
-      notify(`調査スキルの起動に失敗しました（deshi /run ${res.status}）。`);
+      await tellDm(dm, `調査スキルの起動に失敗しました（deshi /run ${res.status}）。`);
       return;
     }
-    notify('原因調査を開始しました。結果は GitHub に記録します。');
+    // Success: the feedback-gh skill reports the created issue to this same DM.
   } catch (err) {
     log.error('delivery-notify: deshi /run failed', { err });
-    notify('調査スキルの起動に失敗しました（deshi daemon に接続できません）。');
+    await tellDm(dm, '調査スキルの起動に失敗しました（deshi daemon に接続できません）。');
   }
 });
