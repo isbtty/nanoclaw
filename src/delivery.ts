@@ -99,6 +99,22 @@ function backoffMs(attempts: number, err: unknown): number {
  *  dead-lettered in the DB, so a restart does not resurrect them. */
 const deliveryAttempts = new Map<string, { attempts: number; nextRetryAt: number }>();
 
+/** Fired when a message is dead-lettered (permanent error or transient ceiling).
+ *  Lets a module (delivery-notify) alert the owner / user without core depending
+ *  on the approvals or deshi modules — same decoupling as onDeliveryAdapterReady. */
+export interface DeadLetterEvent {
+  session: Session;
+  msg: OutboundMessage;
+  reason: 'permanent' | 'ceiling';
+  err: unknown;
+}
+type DeadLetterCallback = (ev: DeadLetterEvent) => void | Promise<void>;
+const deadLetterCallbacks: DeadLetterCallback[] = [];
+
+export function onDeadLetter(cb: DeadLetterCallback): void {
+  deadLetterCallbacks.push(cb);
+}
+
 /**
  * Sessions whose outbound queue is currently being drained.
  *
@@ -346,6 +362,14 @@ function deadLetterMessage(
   });
   markDeliveryFailed(inDb, msg.id);
   deliveryAttempts.delete(msg.id);
+
+  // Fire-and-forget: notify listeners (delivery-notify module) without blocking
+  // the drain or letting a listener failure re-enter the delivery path.
+  for (const cb of deadLetterCallbacks) {
+    void Promise.resolve()
+      .then(() => cb({ session, msg, reason, err }))
+      .catch((cbErr) => log.error('onDeadLetter callback threw', { messageId: msg.id, err: cbErr }));
+  }
 }
 
 async function deliverMessage(

@@ -22,3 +22,6 @@ import './scheduling/index.js';
 import './permissions/index.js';
 import './agent-to-agent/index.js';
 import './self-mod/index.js';
+// delivery-notify uses requestApproval (approvals) + ensureUserDm (permissions),
+// so it must load after both.
+import './delivery-notify/index.js';
