@@ -19,6 +19,7 @@ import {
   markDelivered,
   markDeliveryFailed,
   migrateDeliveredTable,
+  type OutboundMessage,
 } from './db/session-db.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
@@ -29,10 +30,74 @@ import type { Session } from './types.js';
 
 const ACTIVE_POLL_MS = 1000;
 const SWEEP_POLL_MS = 60_000;
-const MAX_DELIVERY_ATTEMPTS = 3;
 
-/** Track delivery attempt counts. Resets on process restart (gives failed messages a fresh chance). */
-const deliveryAttempts = new Map<string, number>();
+// Delivery treats the channel as inherently flaky (Telegram drops connections
+// constantly — see isbtty/deshi#491). Transient failures are NOT capped by an
+// attempt count; they retry with exponential backoff until they succeed. The
+// only bound is a durable time ceiling so a channel that is broken for hours
+// eventually dead-letters instead of retrying forever. Permanent failures
+// (auth/permission/validation/unauthorized/malformed) skip retries entirely.
+const BACKOFF_BASE_MS = 1000;
+const BACKOFF_CAP_MS = 60_000;
+const TRANSIENT_CEILING_MS = 6 * 60 * 60 * 1000; // 6h
+
+/** Delivery errors that will never succeed on retry — dead-lettered on first
+ *  occurrence instead of retried. Thrown by deliverMessage for routing/permission
+ *  failures; adapter-level permanent errors are matched by name (see isPermanentError). */
+export class PermanentDeliveryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentDeliveryError';
+  }
+}
+
+/** Adapter error `name`s that are permanent. Matched by string so core stays
+ *  decoupled from @chat-adapter/* (the adapter sets these names explicitly). */
+const PERMANENT_ADAPTER_ERROR_NAMES = new Set([
+  'AuthenticationError',
+  'PermissionError',
+  'ResourceNotFoundError',
+  'ValidationError',
+  'NotImplementedError',
+]);
+
+/** Classify a delivery failure. Default is transient (retry) — only known
+ *  permanent errors dead-letter, so an unrecognized error is retried rather
+ *  than silently dropped (denylist-permanent). */
+function isPermanentError(err: unknown): boolean {
+  if (err instanceof PermanentDeliveryError) return true;
+  if (err instanceof SyntaxError) return true; // malformed message content (JSON.parse)
+  const name = (err as { name?: string } | null)?.name ?? '';
+  return PERMANENT_ADAPTER_ERROR_NAMES.has(name);
+}
+
+/** Parse a messages_out.timestamp as milliseconds. SQLite `datetime('now')`
+ *  yields "YYYY-MM-DD HH:MM:SS" in UTC with no timezone marker, which Date.parse
+ *  would misread as local time — normalize to UTC so the ceiling age is correct
+ *  regardless of the host timezone. ISO-8601 values with a Z/offset pass through. */
+function parseDbTimestampMs(ts: string): number {
+  const trimmed = ts.trim();
+  const hasTz = /(Z|[+-]\d\d:?\d\d)$/.test(trimmed);
+  const isoish = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T');
+  return Date.parse(hasTz ? isoish : `${isoish}Z`);
+}
+
+/** Backoff before the next retry of a transient failure. Exponential 1s→60s,
+ *  but never shorter than a rate-limit's server-provided retryAfter. */
+function backoffMs(attempts: number, err: unknown): number {
+  const exp = Math.min(BACKOFF_BASE_MS * 2 ** (attempts - 1), BACKOFF_CAP_MS);
+  const retryAfter = (err as { retryAfter?: number } | null)?.retryAfter;
+  if (typeof retryAfter === 'number' && retryAfter > 0) {
+    return Math.min(Math.max(exp, retryAfter * 1000), 300_000);
+  }
+  return exp;
+}
+
+/** Per-message retry state. In-memory: resets on process restart, which gives
+ *  undelivered transient messages a fresh retry (they survive in messages_out
+ *  because no permanent sentinel was written). Permanent failures are already
+ *  dead-lettered in the DB, so a restart does not resurrect them. */
+const deliveryAttempts = new Map<string, { attempts: number; nextRetryAt: number }>();
 
 /**
  * Sessions whose outbound queue is currently being drained.
@@ -187,7 +252,14 @@ async function drainSession(session: Session): Promise<void> {
     // Ensure platform_message_id column exists (migration for existing sessions)
     migrateDeliveredTable(inDb);
 
+    const nowMs = Date.now();
     for (const msg of undelivered) {
+      // Respect backoff: a transient failure schedules its next attempt, and
+      // we skip the message until then. It stays undelivered, so the next poll
+      // tick re-drains it once the backoff has elapsed.
+      const state = deliveryAttempts.get(msg.id);
+      if (state && state.nextRetryAt > nowMs) continue;
+
       try {
         const platformMsgId = await deliverMessage(msg, session, inDb);
         markDelivered(inDb, msg.id, platformMsgId ?? null);
@@ -203,32 +275,77 @@ async function drainSession(session: Session): Promise<void> {
           pauseTypingRefreshAfterDelivery(session.id);
         }
       } catch (err) {
-        const attempts = (deliveryAttempts.get(msg.id) ?? 0) + 1;
-        deliveryAttempts.set(msg.id, attempts);
-        if (attempts >= MAX_DELIVERY_ATTEMPTS) {
-          log.error('Message delivery failed permanently, giving up', {
-            messageId: msg.id,
-            sessionId: session.id,
-            attempts,
-            err,
-          });
-          markDeliveryFailed(inDb, msg.id);
-          deliveryAttempts.delete(msg.id);
-        } else {
-          log.warn('Message delivery failed, will retry', {
-            messageId: msg.id,
-            sessionId: session.id,
-            attempt: attempts,
-            maxAttempts: MAX_DELIVERY_ATTEMPTS,
-            err,
-          });
-        }
+        handleDeliveryFailure(inDb, session, msg, err);
       }
     }
   } finally {
     outDb.close();
     inDb.close();
   }
+}
+
+/**
+ * Decide what to do with a failed delivery: dead-letter permanent failures
+ * immediately, retry transient ones with backoff until a durable time ceiling.
+ */
+function handleDeliveryFailure(inDb: Database.Database, session: Session, msg: OutboundMessage, err: unknown): void {
+  // Permanent — will never succeed on retry. Dead-letter on first occurrence.
+  if (isPermanentError(err)) {
+    deadLetterMessage(inDb, session, msg, err, 'permanent');
+    return;
+  }
+
+  // Transient — keep retrying with backoff. The only bound is a durable time
+  // ceiling measured from the message's original timestamp, so a channel that
+  // stays broken for hours eventually dead-letters instead of retrying forever.
+  const ageMs = Date.now() - parseDbTimestampMs(msg.timestamp);
+  if (Number.isFinite(ageMs) && ageMs > TRANSIENT_CEILING_MS) {
+    deadLetterMessage(inDb, session, msg, err, 'ceiling');
+    return;
+  }
+
+  const attempts = (deliveryAttempts.get(msg.id)?.attempts ?? 0) + 1;
+  const wait = backoffMs(attempts, err);
+  deliveryAttempts.set(msg.id, { attempts, nextRetryAt: Date.now() + wait });
+  log.warn('Message delivery failed, will retry', {
+    messageId: msg.id,
+    sessionId: session.id,
+    attempt: attempts,
+    retryInMs: wait,
+    err,
+  });
+}
+
+/**
+ * Terminate delivery of a message: record the permanent-failure sentinel so it
+ * is never re-attempted, and drop its retry state.
+ *
+ * @param reason 'permanent' (deterministic error) or 'ceiling' (transient error
+ *   that never recovered within TRANSIENT_CEILING_MS).
+ *
+ * Seam for 段2 (isbtty/deshi#491, delivery-failure notification): this is where
+ * the owner is alerted and the waiting user gets a best-effort apology.
+ * NOTE: that notification will reuse the approval-card routing (requestApproval
+ * → owner/admin DM). If a future requirement moves approval cards to a separate
+ * channel (e.g. a Slack channel for team-operated bots), split the failure/alert
+ * routing out into its own logic — where an error alert is delivered is a
+ * different concern from where an approval card is delivered.
+ */
+function deadLetterMessage(
+  inDb: Database.Database,
+  session: Session,
+  msg: OutboundMessage,
+  err: unknown,
+  reason: 'permanent' | 'ceiling',
+): void {
+  log.error('Message delivery dead-lettered', {
+    messageId: msg.id,
+    sessionId: session.id,
+    reason,
+    err,
+  });
+  markDeliveryFailed(inDb, msg.id);
+  deliveryAttempts.delete(msg.id);
 }
 
 async function deliverMessage(
@@ -263,7 +380,7 @@ async function deliverMessage(
   // check will throw, which falls into the normal retry → mark-failed path.
   if (msg.channel_type === 'agent') {
     if (!hasTable(getDb(), 'agent_destinations')) {
-      throw new Error(`agent-to-agent module not installed — cannot route message ${msg.id}`);
+      throw new PermanentDeliveryError(`agent-to-agent module not installed — cannot route message ${msg.id}`);
     }
     const { routeAgentMessage } = await import('./modules/agent-to-agent/agent-route.js');
     await routeAgentMessage(msg, session);
@@ -289,7 +406,9 @@ async function deliverMessage(
   if (msg.channel_type && msg.platform_id) {
     const mg = getMessagingGroupByPlatform(msg.channel_type, msg.platform_id);
     if (!mg) {
-      throw new Error(`unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`);
+      throw new PermanentDeliveryError(
+        `unknown messaging group for ${msg.channel_type}/${msg.platform_id} (message ${msg.id})`,
+      );
     }
     const isOriginChat = session.messaging_group_id === mg.id;
     // Guarded: without the agent-to-agent module, `agent_destinations`
@@ -303,7 +422,7 @@ async function deliverMessage(
         )
         .get(session.agent_group_id, 'channel', mg.id);
       if (!row) {
-        throw new Error(
+        throw new PermanentDeliveryError(
           `unauthorized channel destination: ${session.agent_group_id} cannot send to ${mg.channel_type}/${mg.platform_id}`,
         );
       }
