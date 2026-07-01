@@ -113,6 +113,9 @@ describe('delivery-notify — approval handler', () => {
     const [url, opts] = fetchMock.mock.calls[0]!;
     expect(String(url)).toMatch(/\/run$/);
     const body = JSON.parse((opts as any).body);
+    // Routed through deshi-general (exposed to nanoclaw), which orchestrates
+    // feedback-gh (not exposed → can't be /run directly).
+    expect(body.input).toContain('/deshi-general');
     expect(body.input).toContain('/deshi-feedback-gh');
     expect(body.input).toContain('ValidationError');
     expect(body.input).toContain('out-1');

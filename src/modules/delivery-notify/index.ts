@@ -114,8 +114,14 @@ async function tellDm(dm: MessagingGroup, text: string): Promise<void> {
   }
 }
 
-/** On approve, run /deshi-feedback-gh to open a GitHub issue for the failure.
+/** On approve, ask deshi-general to open a GitHub issue for the failure.
  *  Output routes to the owner's DM.
+ *
+ *  Routed through /deshi-general (not /deshi-feedback-gh directly): feedback-gh
+ *  is not exposed to nanoclaw (`expose-to-nanoclaw: false`), so a direct /run
+ *  is rejected by the daemon's nanoclaw allowlist. deshi-general IS exposed and
+ *  orchestrates running feedback-gh internally (the "worker-skill 直叩き" pattern,
+ *  isbtty/deshi ADR-0010).
  *
  *  We re-derive the owner DM via pickApprovalDelivery rather than trusting the
  *  approval context: ctx.userId is the bare platform id (no namespace) so
@@ -138,9 +144,9 @@ registerApprovalHandler(ACTION, async ({ session, payload }) => {
   const dm = target.messagingGroup;
 
   const input =
-    `/deshi-feedback-gh delivery nanoclaw の配送が dead-letter しました。` +
-    `reason=${reason} errorClass=${cls} channel=${channelType} messageId=${messageId}。` +
-    `原因を調査し、必要なら修正方針を issue にまとめてください。`;
+    `/deshi-general nanoclaw の配送が dead-letter しました` +
+    `（reason=${reason} errorClass=${cls} channel=${channelType} messageId=${messageId}）。` +
+    `/deshi-feedback-gh を実行して、この配送障害を GitHub issue として起票してください。`;
 
   const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
   try {
