@@ -149,6 +149,20 @@ export interface ChatSdkBridgeConfig {
     rawFile: Record<string, unknown>,
   ) => Promise<{ data: Buffer; name?: string; mimeType?: string } | null>;
   /**
+   * Optional: append attachments the adapter's own event didn't surface. Runs
+   * after `message.attachments` are resolved (even when there were none);
+   * receives the raw platform event and the attachments already gathered, and
+   * returns extra entries (bytes + metadata) to append, or null for none.
+   * Used by Slack to pull a file from the thread root when the inbound message
+   * is a reply that only references an earlier upload — the container has no
+   * platform credentials to fetch it itself. Implementations should no-op when
+   * the message already carries its own files.
+   */
+  enrichInboundAttachments?: (
+    raw: Record<string, unknown>,
+    existing: Array<Record<string, unknown>>,
+  ) => Promise<Array<{ data: Buffer; name?: string; mimeType?: string }> | null>;
+  /**
    * Optional: derive richer inbound text from the raw platform event when the
    * adapter's plain `text` omits content that lives in structured payloads.
    * Needed for Slack Block Kit messages (e.g. Notion/automation notifications)
@@ -158,10 +172,7 @@ export interface ChatSdkBridgeConfig {
    * May be async — e.g. Slack fetches the thread root via the Web API when the
    * inbound message is a reply, so the root post's content travels with it.
    */
-  enrichInboundText?: (
-    raw: Record<string, unknown>,
-    currentText: string,
-  ) => string | null | Promise<string | null>;
+  enrichInboundText?: (raw: Record<string, unknown>, currentText: string) => string | null | Promise<string | null>;
   /**
    * Maximum text length the underlying adapter accepts in a single message.
    * When set, the bridge splits outbound text longer than this on paragraph
@@ -277,6 +288,29 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         enriched.push(entry);
       }
       serialized.attachments = enriched;
+    }
+
+    // Append attachments the adapter's event didn't surface — e.g. Slack pulls
+    // a file from the thread root when the inbound message is a reply that only
+    // references an earlier upload. Runs even when the message had no files of
+    // its own, so a reference-only reply still carries the bytes into the
+    // container (which has no platform credentials to fetch them itself).
+    if (config.enrichInboundAttachments && message.raw) {
+      try {
+        const existing = (serialized.attachments as Array<Record<string, any>>) ?? [];
+        const extra = await config.enrichInboundAttachments(message.raw as Record<string, unknown>, existing);
+        if (extra && extra.length > 0) {
+          const mapped = extra.map((e) => ({
+            type: e.mimeType?.startsWith('image/') ? 'image' : 'document',
+            name: e.name,
+            mimeType: e.mimeType,
+            data: e.data.toString('base64'),
+          }));
+          serialized.attachments = [...existing, ...mapped];
+        }
+      } catch (err) {
+        log.warn('enrichInboundAttachments failed', { err });
+      }
     }
 
     // Extract reply context via platform-specific hook
