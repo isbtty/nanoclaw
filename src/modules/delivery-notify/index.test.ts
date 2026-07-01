@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   deadLetterCb: null as null | ((ev: unknown) => Promise<void>),
   approvalHandler: null as null | ((ctx: unknown) => Promise<void>),
-  requestApproval: vi.fn(async (..._args: unknown[]) => {}),
+  requestApproval: vi.fn(async (..._args: unknown[]) => true),
   deliver: vi.fn(async (..._args: unknown[]) => 'plat'),
   pickApprover: vi.fn((..._args: unknown[]) => ['telegram:owner']),
   pickApprovalDelivery: vi.fn(async (..._args: unknown[]) => ({
@@ -98,6 +98,15 @@ describe('delivery-notify — onDeadLetter', () => {
     await h.deadLetterCb!(event({ agentGroupId: 'ag-int', channelType: 'agent' }));
     expect(h.requestApproval).not.toHaveBeenCalled();
     expect(h.deliver).not.toHaveBeenCalled();
+  });
+
+  it('releases the cooldown when the card fails to send, so the next dead-letter re-alerts', async () => {
+    h.requestApproval.mockResolvedValueOnce(false); // first card fails to deliver
+    await h.deadLetterCb!(event({ agentGroupId: 'ag-fail', errName: 'AuthenticationError' }));
+    // Cooldown was released → a second dead-letter of the same class alerts again
+    // instead of being suppressed for the full cooldown window.
+    await h.deadLetterCb!(event({ agentGroupId: 'ag-fail', errName: 'AuthenticationError' }));
+    expect(h.requestApproval).toHaveBeenCalledTimes(2);
   });
 });
 

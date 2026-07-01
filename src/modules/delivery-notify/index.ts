@@ -59,11 +59,15 @@ async function alertOwner(ev: DeadLetterEvent): Promise<void> {
   const now = Date.now();
   const last = lastNotified.get(key);
   if (last !== undefined && now - last < NOTIFY_COOLDOWN_MS) return; // storm suppression
+  // Claim the cooldown slot synchronously (before any await) so a burst of
+  // dead-letters in one drain doesn't fire a card each — the later ones see it
+  // set and suppress. If the card ultimately fails to send, we release it below
+  // so a transient send failure doesn't lock out the next (deliverable) alert.
   lastNotified.set(key, now);
 
   const agentName = getAgentGroup(ev.session.agent_group_id)?.name ?? 'agent';
   try {
-    await requestApproval({
+    const delivered = await requestApproval({
       session: ev.session,
       agentName,
       action: ACTION,
@@ -77,7 +81,11 @@ async function alertOwner(ev: DeadLetterEvent): Promise<void> {
       title: '返信の配送に失敗しました',
       question: `エラーが発生し、返信をお届けできませんでした（種別: ${cls}）。原因を調査してよろしいですか？`,
     });
+    // Card never reached the owner — release the cooldown so the next
+    // dead-letter can re-alert instead of being silently suppressed for 10min.
+    if (!delivered) lastNotified.delete(key);
   } catch (err) {
+    lastNotified.delete(key);
     log.error('delivery-notify: owner alert failed', { key, err });
   }
 }

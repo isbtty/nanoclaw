@@ -161,13 +161,15 @@ export interface RequestApprovalOptions {
  * caller's perspective — the admin's response kicks off the registered
  * approval handler for this action via the response dispatcher.
  */
-export async function requestApproval(opts: RequestApprovalOptions): Promise<void> {
+/** @returns true if the approval card was delivered to an approver, false if it
+ *  could not be sent (no approver, no reachable DM, or channel delivery failed). */
+export async function requestApproval(opts: RequestApprovalOptions): Promise<boolean> {
   const { session, action, payload, title, question, agentName } = opts;
 
   const approvers = pickApprover(session.agent_group_id);
   if (approvers.length === 0) {
     notifyAgent(session, `${action} failed: no owner or admin configured to approve.`);
-    return;
+    return false;
   }
 
   const originChannelType = session.messaging_group_id
@@ -177,7 +179,7 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
   const target = await pickApprovalDelivery(approvers, originChannelType);
   if (!target) {
     notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
-    return;
+    return false;
   }
 
   const approvalId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -212,9 +214,10 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     } catch (err) {
       log.error('Failed to deliver approval card', { action, approvalId, err });
       notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
-      return;
+      return false;
     }
   }
 
   log.info('Approval requested', { action, approvalId, agentName, approver: target.userId });
+  return true;
 }
