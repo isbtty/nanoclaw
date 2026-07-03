@@ -79,6 +79,23 @@ describe('handleKnowledgeScopeCommand', () => {
     }
   });
 
+  it('matches when the bot is @mentioned before the command (Slack/Discord group case)', async () => {
+    // mention-required groups arrive as `<@Ubot> update-knowledge-scope` (or a
+    // labelled `<@Ubot|bot>` / generic `@bot`). The leading mention must not
+    // break the exact-match. (isbtty/deshi#511)
+    for (const text of [
+      '<@Ubot> update-knowledge-scope',
+      '<@Ubot|dou-team-boswell> update-knowledge-scope',
+      '@dou-team-boswell update-knowledge-scope',
+      '<@Ubot>  /update-knowledge-scope extra',
+    ]) {
+      maybeDeliverScopeLinkMock.mockClear();
+      const handled = await handleKnowledgeScopeCommand(inputWith(text));
+      expect(handled, text).toBe(true);
+      expect(maybeDeliverScopeLinkMock, text).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('does NOT match natural language — that is the deshi delegation fragment’s job', async () => {
     for (const text of ['公開範囲を編集したい', '公開範囲弄りたい', '知識スコープを変更したい', '今日は天気がいいね']) {
       const handled = await handleKnowledgeScopeCommand(inputWith(text));

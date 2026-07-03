@@ -109,12 +109,25 @@ function channelSource(
 }
 
 /**
+ * Strip leading platform mention tokens so an addressed command still matches.
+ * In mention-required groups (Slack/Discord) the user naturally types
+ * `@bot update-knowledge-scope`, which arrives as `<@Ubot> update-knowledge-scope`
+ * — the command is no longer the first token. We drop one or more leading
+ * mentions (Slack `<@U123>` / `<@U123|name>`, generic `@name`) before matching.
+ * Only the leading run is removed, so natural-language text is unaffected.
+ */
+function stripLeadingMentions(text: string): string {
+  return text.replace(/^(?:\s*(?:<@[!#]?[A-Za-z0-9_]+(?:\|[^>]+)?>|@\S+))+\s*/, '');
+}
+
+/**
  * True when the message's leading token is the explicit command (slash command
- * or skill name). Exact match only — natural-language requests are guided to
- * this command by the deshi delegation fragment, not matched here.
+ * or skill name), ignoring any leading @mention of the bot. Exact match only —
+ * natural-language requests are guided to this command by the deshi delegation
+ * fragment, not matched here.
  */
 export function matchesScopeCommand(content: string): boolean {
-  const text = parseText(content);
+  const text = stripLeadingMentions(parseText(content));
   if (!text) return false;
   return COMMAND_ALIASES.has(text.split(/\s/)[0].toLowerCase());
 }
