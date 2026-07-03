@@ -45,35 +45,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { shouldDedupeRunStart, armRunStartGuard, type LastRunStart } from './run-start-guard.js';
+import { hostFetch } from './host-fetch.js';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
 
 function log(msg: string): void {
   console.error(`[DESHI] ${msg}`);
-}
-
-/**
- * host-tools-server (host 側) の `POST /tools/<name>` に転送する。
- * docker-internal が解決できない環境 (Linux host で network=host で動かす等) では
- * localhost にフォールバックする。
- */
-async function hostFetch(toolName: string, args: unknown, signal?: AbortSignal): Promise<Response> {
-  const url = `${DESHI_HOST_URL}/tools/${toolName}`;
-  const init: RequestInit = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(args ?? {}),
-    ...(signal ? { signal } : {}),
-  };
-  try {
-    return await fetch(url, init);
-  } catch (err) {
-    if (DESHI_HOST_URL.includes('host.docker.internal')) {
-      const fallbackUrl = url.replace('host.docker.internal', 'localhost');
-      return await fetch(fallbackUrl, init);
-    }
-    throw err;
-  }
 }
 
 /**
@@ -86,7 +63,7 @@ async function callHostTool(toolName: string, args: unknown): Promise<{
 }> {
   log(`>>> ${toolName} ${JSON.stringify(args ?? {})}`);
   try {
-    const res = await hostFetch(toolName, args);
+    const res = await hostFetch(DESHI_HOST_URL, toolName, args, undefined, { log });
     const text = await res.text();
     if (!res.ok) {
       return {
