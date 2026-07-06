@@ -14,6 +14,7 @@ import {
 } from './db/session-state.js';
 import {
   formatMessages,
+  formatRespawnNote,
   extractRouting,
   categorizeMessage,
   isClearCommand,
@@ -178,7 +179,16 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
   // Clear leftover 'processing' acks from a previous crashed container.
   // This lets the new container re-process those messages.
-  clearStaleProcessingAcks();
+  const clearedStaleAcks = clearStaleProcessingAcks();
+
+  // Respawn-after-interruption detection (isbtty/deshi#523): if we're resuming a
+  // prior session (continuation) AND the previous container died mid-turn (left
+  // 'processing' acks behind), the resumed transcript may show an interrupted
+  // tool call. Prepend a one-shot note to the first real prompt so the agent
+  // doesn't mistake a host respawn for a lost connection / failure. Gated on
+  // continuation because a fresh session has no phantom in-flight work to
+  // misread.
+  let respawnNotePending = continuation != null && clearedStaleAcks > 0;
 
   let pollCount = 0;
   let isFirstPoll = true;
@@ -316,7 +326,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
 
     // Format messages: passthrough commands get raw text (only if the
     // provider natively handles slash commands), others get XML.
-    const prompt = formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands);
+    let prompt = formatMessagesWithCommands(keep, config.provider.supportsNativeSlashCommands);
+
+    // One-shot respawn note for the first prompt after a mid-turn restart.
+    if (respawnNotePending) {
+      prompt = formatRespawnNote() + '\n\n' + prompt;
+      respawnNotePending = false;
+      log('Prepended respawn note to first prompt after mid-processing restart');
+    }
 
     log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
 
