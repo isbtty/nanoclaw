@@ -45,6 +45,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { shouldDedupeRunStart, armRunStartGuard, type LastRunStart } from './run-start-guard.js';
+import { loadInflightJob, saveInflightJob, clearInflightJob } from './inflight-job-store.js';
 import { hostFetch } from './host-fetch.js';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
@@ -198,7 +199,16 @@ function readSessionRouting(): ChannelContext {
 //   session を扱うので session を跨がない。
 // ─────────────────────────────────────────────────────────────
 // 判定ロジックは run-start-guard.ts (純粋・単体テスト済) に切り出している。
-let lastRunStart: LastRunStart | null = null;
+//
+// respawn 越しの永続化 (isbtty/deshi#523 対応策5): lastRunStart は module-level
+// なのでコンテナ respawn で消える → ガードが無効化され重複 job を生み、in-flight
+// jobId も失われる。workspace mount 上のファイルに退避し、起動時に復元する。
+const INFLIGHT_JOB_PATH =
+  process.env.DESHI_INFLIGHT_JOB_PATH || '/workspace/agent/.deshi/last-run-start.json';
+let lastRunStart: LastRunStart | null = loadInflightJob(INFLIGHT_JOB_PATH);
+if (lastRunStart) {
+  log(`Restored in-flight deshi job from previous container: ${lastRunStart.jobId}`);
+}
 
 /**
  * agent を起こした発話 (messages_in.trigger=1) の MAX(seq) を返す。新しいユーザー
@@ -284,7 +294,12 @@ server.tool(
 
     // 成功して jobId が取れたらガードを arm する。失敗/非 JSON 時は更新しないので
     // 次回も転送される (失敗を握り潰してガードに閉じ込めない)。
+    const prevRunStart = lastRunStart;
     lastRunStart = armRunStartGuard(lastRunStart, triggerSeq, res.content?.[0]?.text, res.isError ?? false);
+    // 新しい job を arm できたら respawn 越しに残るよう永続化 (対応策5)。
+    if (lastRunStart && lastRunStart !== prevRunStart) {
+      saveInflightJob(INFLIGHT_JOB_PATH, lastRunStart);
+    }
     return res;
   },
 );
@@ -316,10 +331,26 @@ server.tool(
     } catch {
       channelContext = undefined;
     }
-    return callHostTool('deshi_daemon_poll_until_done', {
+    const res = await callHostTool('deshi_daemon_poll_until_done', {
       ...args,
       ...(channelContext ? { channelContext } : {}),
     });
+
+    // job が terminal (completed / failed。jobEvicted・daemonRestarted は failed
+    // で返る) に達したら、この session の in-flight 永続を消す (対応策5)。timedOut
+    // は status='pending' のままなので残す (まだ in-flight)。呼び出された jobId が
+    // 永続中の job と一致するときだけ消す (別 job の poll で取り違えない)。
+    if (!res.isError && args.jobId === lastRunStart?.jobId) {
+      try {
+        const parsed = JSON.parse(res.content?.[0]?.text ?? '') as { status?: string };
+        if (parsed.status === 'completed' || parsed.status === 'failed') {
+          clearInflightJob(INFLIGHT_JOB_PATH);
+        }
+      } catch {
+        /* レスポンスが JSON でない (想定外) ときは何もしない */
+      }
+    }
+    return res;
   },
 );
 
