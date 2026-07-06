@@ -403,43 +403,18 @@ describe('poll loop — respawn note (isbtty/deshi#523)', () => {
 
 // Helper: run poll loop until aborted or timeout
 async function runPollLoopWithTimeout(provider: MockProvider, signal: AbortSignal, timeoutMs: number): Promise<void> {
-  // Own an internal abort so runPollLoop is ALWAYS stopped once this wrapper
-  // settles — whether the loop returned, the timeout fired, or the caller's
-  // signal aborted. Promise.race does not cancel its losers, so without this
-  // the underlying loop kept running forever; leaked loops from earlier tests
-  // then polled the shared module-singleton session DBs concurrently with
-  // later tests, racing on /clear handling and producing full-suite-only
-  // flakes (isbtty/deshi#523 CI). The loop observes internal.signal at the top
-  // of each poll iteration and exits.
-  const internal = new AbortController();
-  const onExternalAbort = () => internal.abort();
-  if (signal.aborted) internal.abort();
-  else signal.addEventListener('abort', onExternalAbort);
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      runPollLoop({
-        provider,
-        providerName: 'mock',
-        cwd: '/tmp',
-        signal: internal.signal,
-      }),
-      // Reject promptly on external abort so callers awaiting this wrapper
-      // don't block until the loop notices (a blocked provider query can take
-      // a while to unwind).
-      new Promise<void>((_, reject) => {
-        internal.signal.addEventListener('abort', () => reject(new Error('aborted')));
-      }),
-      new Promise<void>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-    internal.abort();
-    signal.removeEventListener('abort', onExternalAbort);
-  }
+  return Promise.race([
+    runPollLoop({
+      provider,
+      providerName: 'mock',
+      cwd: '/tmp',
+      signal,
+    }),
+    new Promise<void>((_, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('aborted')));
+    }),
+    new Promise<void>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+  ]);
 }
 
 async function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
@@ -679,15 +654,19 @@ describe('poll loop — slash command during active query', () => {
 
     const provider = new BlockingProvider();
     const controller = new AbortController();
-    const loopPromise = runPollLoopWithTimeout(provider as unknown as MockProvider, controller.signal, 3000);
+    // Loop self-timeout must comfortably outlast the abort → outer-loop
+    // reprocess → "Session cleared." write cycle; on a loaded CI runner the
+    // old 3000ms budget could fire before that write landed, killing the loop
+    // so the final waitFor never saw the confirmation (deshi#523 CI flake).
+    const loopPromise = runPollLoopWithTimeout(provider as unknown as MockProvider, controller.signal, 15000);
 
-    await waitFor(() => provider.queries === 1, 2000);
+    await waitFor(() => provider.queries === 1, 5000);
     insertMessage('m-clear-active', { sender: 'Alice', text: '/clear' }, { platformId: 'chan-1', channelType: 'discord' });
 
-    await waitFor(() => provider.aborts === 1, 2000);
+    await waitFor(() => provider.aborts === 1, 5000);
     await waitFor(
       () => getUndeliveredMessages().some((msg) => JSON.parse(msg.content).text === 'Session cleared.'),
-      2000,
+      5000,
     );
     controller.abort();
 
