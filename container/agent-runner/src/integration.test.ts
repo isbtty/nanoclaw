@@ -654,15 +654,19 @@ describe('poll loop — slash command during active query', () => {
 
     const provider = new BlockingProvider();
     const controller = new AbortController();
-    const loopPromise = runPollLoopWithTimeout(provider as unknown as MockProvider, controller.signal, 3000);
+    // Loop self-timeout must comfortably outlast the abort → outer-loop
+    // reprocess → "Session cleared." write cycle; on a loaded CI runner the
+    // old 3000ms budget could fire before that write landed, killing the loop
+    // so the final waitFor never saw the confirmation (deshi#523 CI flake).
+    const loopPromise = runPollLoopWithTimeout(provider as unknown as MockProvider, controller.signal, 15000);
 
-    await waitFor(() => provider.queries === 1, 2000);
+    await waitFor(() => provider.queries === 1, 5000);
     insertMessage('m-clear-active', { sender: 'Alice', text: '/clear' }, { platformId: 'chan-1', channelType: 'discord' });
 
-    await waitFor(() => provider.aborts === 1, 2000);
+    await waitFor(() => provider.aborts === 1, 5000);
     await waitFor(
       () => getUndeliveredMessages().some((msg) => JSON.parse(msg.content).text === 'Session cleared.'),
-      2000,
+      5000,
     );
     controller.abort();
 
