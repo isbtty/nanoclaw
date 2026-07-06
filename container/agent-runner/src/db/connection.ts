@@ -46,21 +46,13 @@ export function openInboundDb(): Database {
   // In test mode return a thin wrapper over the in-memory singleton.
   // Callers do try/finally { db.close() } — the wrapper no-ops close()
   // so the singleton survives for the rest of the test.
-  if (_testMode) {
-    if (_inbound) {
-      const db = _inbound;
-      return {
-        prepare: (sql: string) => db.prepare(sql),
-        exec: (sql: string) => db.exec(sql),
-        close: () => {},
-      } as unknown as Database;
-    }
-    // Test mode but the singleton is gone (closeSessionDb ran). Never fall
-    // through to the real /workspace file — a leaked async poller from a prior
-    // test doing so would create/latch a real DB and cross-contaminate later
-    // tests' shared singletons (isbtty/deshi#523 CI flake). Throwing keeps the
-    // access harmless: the poll loop's try/catch just logs and moves on.
-    throw new Error('openInboundDb: session DB closed (test mode) — leaked access after closeSessionDb');
+  if (_testMode && _inbound) {
+    const db = _inbound;
+    return {
+      prepare: (sql: string) => db.prepare(sql),
+      exec: (sql: string) => db.exec(sql),
+      close: () => {},
+    } as unknown as Database;
   }
   const db = new Database(DEFAULT_INBOUND_PATH, { readonly: true });
   db.exec('PRAGMA busy_timeout = 5000');
@@ -76,9 +68,6 @@ export function openInboundDb(): Database {
  */
 export function getInboundDb(): Database {
   if (!_inbound) {
-    if (_testMode) {
-      throw new Error('getInboundDb: session DB closed (test mode) — leaked access after closeSessionDb');
-    }
     _inbound = new Database(DEFAULT_INBOUND_PATH, { readonly: true });
     _inbound.exec('PRAGMA busy_timeout = 5000');
     _inbound.exec('PRAGMA mmap_size = 0');
@@ -89,9 +78,6 @@ export function getInboundDb(): Database {
 /** Outbound DB — container owns this file (sole writer). */
 export function getOutboundDb(): Database {
   if (!_outbound) {
-    if (_testMode) {
-      throw new Error('getOutboundDb: session DB closed (test mode) — leaked access after closeSessionDb');
-    }
     _outbound = new Database(DEFAULT_OUTBOUND_PATH);
     _outbound.exec('PRAGMA journal_mode = DELETE');
     _outbound.exec('PRAGMA busy_timeout = 5000');
@@ -280,11 +266,7 @@ export function initTestSessionDb(): { inbound: Database; outbound: Database } {
 export function closeSessionDb(): void {
   _inbound?.close();
   _inbound = null;
+  _testMode = false;
   _outbound?.close();
   _outbound = null;
-  // NOTE: _testMode is intentionally NOT reset here. It's only ever set by
-  // initTestSessionDb (test-only), so leaving it armed keeps the null-singleton
-  // guards in getInboundDb/getOutboundDb/openInboundDb active between tests —
-  // that's what stops a leaked poller from opening the real /workspace file and
-  // cross-contaminating the next test (isbtty/deshi#523).
 }
