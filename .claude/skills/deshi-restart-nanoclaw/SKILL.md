@@ -20,6 +20,10 @@ deshi 側の `/deshi-restart-services` の nanoclaw 版 (別スキル・別リ�
 | `host-tools` | `com.isbtty.nanoclaw.host-tools` (固定) | `tsx src/deshi/host-tools-server.ts` | 不要 (tsx 直実行) | `curl /health` (:5180) |
 | `containers` | (launchd 管轄外) | per-session docker container | 不要 (RO bind-mount) | `docker ps` の再 spawn |
 
+加えて、上記の restart 前に **OneCLI Gateway の SDK/サーバ整合を毎回 probe** する
+(Step 4.5)。これは target ではなく常時プリフライトで、ズレを検知したときのみ
+サーバを upgrade する (詳細は Step 4.5)。
+
 ### このスキルの前提 (重要)
 
 - **host 側 operator が nanoclaw リポジトリを cwd にした Claude Code セッション**から
@@ -135,6 +139,80 @@ if [ "$REBUILD_IMAGE" = 1 ]; then
 fi
 ```
 
+### Step 4.5: OneCLI Gateway 整合 (capability probe / 常時・冪等)
+
+**probe は必ず毎回走る**。フラグでの無効化や個別 target 化はしない — バージョンずれは
+「こちらが気づかないうちに」起きる (`pnpm install` が `@onecli-sh/sdk` を上げても、
+`~/.onecli` の常駐サーバは `latest` 解決で古いイメージのまま取り残される) ため、
+opt-in / opt-out は本末転倒。**重い upgrade (vault recreate) が走るのはズレを検知したときのみ**、
+一致時は完全 no-op。
+
+ホスト側 `ensureAgent`(`createAgent → POST /v1/agents`)は container spawn の前提。
+SDK が `/v1/*` を要求するのにサーバが `/api/*` しか持たないと 404 → spawn 失敗 →
+「typing のまま無限に固まる」(isbtty/deshi#523 別障害)。**サーバを SDK に合わせてから**
+host/containers を再起動する必要があるので、Step 5 (restart) の**前**に置く。
+
+判定は version 文字列比較ではなく **capability probe** (SDK/サーバの semver に対応関係が
+無いため)。named volume (`pgdata` / `app-data`) は維持されるので **agent 登録・secret は保持**。
+
+```bash
+echo; echo "[restart-nanoclaw] === OneCLI Gateway 整合 ==="
+
+OC_PORT=10254; OC_BASE="http://127.0.0.1:$OC_PORT"
+probe_code() { curl -s -o /dev/null -w '%{http_code}' -m 5 "$OC_BASE/$1/agents" 2>/dev/null; }
+
+if ! docker inspect onecli >/dev/null 2>&1; then
+  echo "  - onecli コンテナ無し (native credential proxy 等) — skip"
+else
+  # 1) 稼働中 SDK が要求する API prefix を実体 (.mjs) から検出
+  SDK_MJS=$(ls "$REPO_ROOT"/node_modules/.pnpm/@onecli-sh+sdk@*/node_modules/@onecli-sh/sdk/lib/index.mjs 2>/dev/null | head -1)
+  WANT=api
+  if [ -n "$SDK_MJS" ] && grep -q '/v1/agents' "$SDK_MJS" 2>/dev/null; then WANT=v1; fi
+  echo "  SDK が要求する prefix: /$WANT  (${SDK_MJS:-SDK未検出→/api 前提})"
+
+  # 2) サーバ能力を probe (毎回・軽量)
+  V1=$(probe_code v1); API=$(probe_code api)
+  echo "  server probe: /v1/agents=$V1  /api/agents=$API"
+
+  # 3) 不整合 (SDK=/v1 なのにサーバが /v1/agents=404) のときだけ upgrade
+  if [ "$WANT" = v1 ] && [ "$V1" = 404 ]; then
+    echo "  ⚠ 不整合: SDK は /v1 を要求するがサーバは /v1/agents=404 (旧 API のみ)"
+
+    # pin 運用なら silent 上書きせず警告に留める (reproducibility を壊さない)
+    OC_PIN=""
+    [ -f "$REPO_ROOT/.env" ] && OC_PIN=$(grep -m1 '^ONECLI_VERSION=' "$REPO_ROOT/.env" | cut -d= -f2- | tr -d '"' | sed 's/^latest$//')
+    [ -n "$OC_PIN" ] && echo "  ⚠ .env が ONECLI_VERSION=$OC_PIN を pin 中 — pull が新版を取らない可能性。/v1 非対応なら手動 bump が必要 (自動書換はしない)。"
+
+    # compose 定義を docker label から動的解決 (ハードコードしない)
+    OC_COMPOSE="$(docker inspect onecli --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>/dev/null)"
+    if [ -z "$OC_COMPOSE" ] || [ ! -f "$OC_COMPOSE" ]; then
+      echo "  ✗ compose file を解決できず (label=${OC_COMPOSE:-none}) — 手動対応:"
+      echo "      cd ~/.onecli && docker compose pull onecli && docker compose up -d onecli"
+    else
+      echo "  compose: $OC_COMPOSE  → pull + up -d onecli..."
+      ( cd "$(dirname "$OC_COMPOSE")" && docker compose pull onecli && docker compose up -d onecli ) 2>&1 | tail -5 | sed 's/^/    /'
+
+      # health 待ち: healthy かつ /v1/agents!=404 の二段確認 (最大 60s)
+      ok_upg=0; hs=none
+      for _ in $(seq 1 30); do
+        hs=$(docker inspect onecli --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null)
+        c=$(probe_code v1)
+        if { [ "$hs" = healthy ] || [ "$hs" = none ]; } && [ -n "$c" ] && [ "$c" != 404 ]; then
+          echo "  ✅ OneCLI 整合完了 (health=$hs, /v1/agents=$c)"; ok_upg=1; break
+        fi
+        sleep 2
+      done
+      if [ "$ok_upg" = 0 ]; then
+        echo "  ❌ upgrade 後も /v1/agents が回復せず (health=$hs, /v1/agents=$(probe_code v1))"
+        [ -n "$OC_PIN" ] && echo "    → ONECLI_VERSION=$OC_PIN の pin が /v1 非対応の可能性大。pin を bump して再実行を。"
+      fi
+    fi
+  else
+    echo "  ✓ OneCLI サーバは SDK と整合済み — no-op"
+  fi
+fi
+```
+
 ### Step 5: kickstart (host / host-tools) + コンテナ再 spawn (containers)
 
 ```bash
@@ -240,6 +318,8 @@ load サイクルが必要。ログは `${REPO_ROOT}/logs/` 配下を確認。
 ## 関連
 
 - Issue: isbtty/deshi#416
+- Issue: isbtty/deshi#523 — Step 4.5 (OneCLI Gateway 整合) の契機。SDK メジャー更新で
+  サーバが `/api/*` のまま取り残され `ensureAgent` が 404 → spawn 失敗 (typing 固着) した障害
 - ADR-0016 (`restart` 動詞追加) — 本スキルの命名根拠
 - `src/install-slug.ts` — host label 動的生成
 - `setup/launchd/com.isbtty.nanoclaw.host-tools.plist` — host-tools launchd
