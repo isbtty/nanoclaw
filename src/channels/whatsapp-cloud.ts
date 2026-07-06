@@ -8,7 +8,6 @@ import { createWhatsAppAdapter } from '@chat-adapter/whatsapp';
 import { readEnvFile } from '../env.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
-import { createAdapterLogger } from './adapter-logger.js';
 
 registerChannelAdapter('whatsapp-cloud', {
   factory: () => {
@@ -24,7 +23,6 @@ registerChannelAdapter('whatsapp-cloud', {
       phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID,
       appSecret: env.WHATSAPP_APP_SECRET,
       verifyToken: env.WHATSAPP_VERIFY_TOKEN,
-      logger: createAdapterLogger('whatsapp-cloud'),
     });
     return createChatSdkBridge({ adapter: whatsappAdapter, concurrency: 'concurrent', supportsThreads: false });
   },
