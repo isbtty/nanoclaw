@@ -175,9 +175,15 @@ export function touchHeartbeat(): void {
  * Clear stale processing_ack entries on container startup.
  * If the previous container crashed, 'processing' entries are leftover.
  * Clearing them lets the new container re-process those messages.
+ *
+ * Returns the number of rows cleared. A non-zero count means the previous
+ * container died mid-turn (it had marked messages 'processing' but never
+ * reached 'completed') — used by the poll loop to flag a respawn-after-
+ * interruption so the resumed agent doesn't mistake it for a lost connection
+ * (isbtty/deshi#523).
  */
-export function clearStaleProcessingAcks(): void {
-  getOutboundDb().prepare("DELETE FROM processing_ack WHERE status = 'processing'").run();
+export function clearStaleProcessingAcks(): number {
+  return getOutboundDb().prepare("DELETE FROM processing_ack WHERE status = 'processing'").run().changes;
 }
 
 /** For tests — creates in-memory DBs with the session schemas. */

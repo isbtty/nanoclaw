@@ -298,6 +298,109 @@ describe('poll loop integration', () => {
 
 });
 
+describe('poll loop — respawn note (isbtty/deshi#523)', () => {
+  function seedStaleProcessingAck(messageId: string) {
+    // Simulate a prior container that died mid-turn: it marked a message
+    // 'processing' in processing_ack but never reached 'completed'.
+    getOutboundDb()
+      .prepare(
+        "INSERT INTO processing_ack (message_id, status, status_changed) VALUES (?, 'processing', datetime('now'))",
+      )
+      .run(messageId);
+  }
+
+  it('prepends the respawn note when resuming after a mid-turn death', async () => {
+    // Resuming a prior session + a leftover 'processing' ack = interrupted respawn.
+    setContinuation('mock', 'prior-session');
+    seedStaleProcessingAck('old-msg');
+    insertMessage('m1', { sender: 'Alice', text: 'are you there?' }, { platformId: 'chan-1', channelType: 'discord' });
+
+    const prompts: string[] = [];
+    const provider = new MockProvider({}, (prompt) => {
+      prompts.push(prompt);
+      return '<message to="discord-test">back</message>';
+    });
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getUndeliveredMessages().length > 0, 2000);
+    controller.abort();
+
+    expect(prompts[0]).toContain('<system-note kind="respawn">');
+    expect(prompts[0]).toContain('接続が切れた');
+    // Still carries the real user message.
+    expect(prompts[0]).toContain('are you there?');
+
+    await loopPromise.catch(() => {});
+  });
+
+  it('does NOT prepend the note without a stale processing ack (clean wake)', async () => {
+    setContinuation('mock', 'prior-session'); // resuming, but no interrupted turn
+    insertMessage('m1', { sender: 'Alice', text: 'hi' }, { platformId: 'chan-1', channelType: 'discord' });
+
+    const prompts: string[] = [];
+    const provider = new MockProvider({}, (prompt) => {
+      prompts.push(prompt);
+      return '<message to="discord-test">hello</message>';
+    });
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getUndeliveredMessages().length > 0, 2000);
+    controller.abort();
+
+    expect(prompts[0]).not.toContain('<system-note kind="respawn">');
+
+    await loopPromise.catch(() => {});
+  });
+
+  it('does NOT prepend the note on a fresh session (no continuation)', async () => {
+    // Interrupted ack but no continuation → fresh start, nothing to misread.
+    seedStaleProcessingAck('old-msg');
+    insertMessage('m1', { sender: 'Alice', text: 'hi' }, { platformId: 'chan-1', channelType: 'discord' });
+
+    const prompts: string[] = [];
+    const provider = new MockProvider({}, (prompt) => {
+      prompts.push(prompt);
+      return '<message to="discord-test">hello</message>';
+    });
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getUndeliveredMessages().length > 0, 2000);
+    controller.abort();
+
+    expect(prompts[0]).not.toContain('<system-note kind="respawn">');
+
+    await loopPromise.catch(() => {});
+  });
+
+  it('prepends the note only to the first prompt, not subsequent turns', async () => {
+    setContinuation('mock', 'prior-session');
+    seedStaleProcessingAck('old-msg');
+    insertMessage('m1', { sender: 'Alice', text: 'first' }, { platformId: 'chan-1', channelType: 'discord' });
+
+    const prompts: string[] = [];
+    const provider = new MockProvider({}, (prompt) => {
+      prompts.push(prompt);
+      return '<message to="discord-test">ok</message>';
+    });
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 3000);
+
+    await waitFor(() => getUndeliveredMessages().length >= 1, 2000);
+    // Second turn — a new message after the first was handled.
+    insertMessage('m2', { sender: 'Alice', text: 'second' }, { platformId: 'chan-1', channelType: 'discord' });
+    await waitFor(() => getUndeliveredMessages().length >= 2, 2000);
+    controller.abort();
+
+    expect(prompts[0]).toContain('<system-note kind="respawn">');
+    expect(prompts.slice(1).some((p) => p.includes('<system-note kind="respawn">'))).toBe(false);
+
+    await loopPromise.catch(() => {});
+  });
+});
+
 // Helper: run poll loop until aborted or timeout
 async function runPollLoopWithTimeout(provider: MockProvider, signal: AbortSignal, timeoutMs: number): Promise<void> {
   return Promise.race([

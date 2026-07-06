@@ -57,6 +57,18 @@ poll が `failed` / `jobEvicted` / `timedOut` を返したら、**その結果�
 **再実行はユーザーが新しく明示的に依頼したときだけ**行う。失敗は握り潰さず、素直に「失敗しました／
 deshi 側で確認が必要です」と伝えるのが正しい挙動。
 
+### respawn 後の復帰（`<system-note kind="respawn">` を見たとき）
+
+処理の途中でホストにコンテナを再起動されると、この system note が届く。**接続断でも失敗でもない** —
+委譲した deshi job はバックグラウンドで完了している可能性がある。謝る前に必ず状態を確認する:
+
+- 委譲中だった job の **jobId が履歴にあれば、その jobId で `deshi_run_poll` を 1 回呼ぶ**。
+- jobId が分からない（履歴から失われた）場合は、**同じ input で `deshi_run_start` を呼ぶ**。多重発火ガードが
+  respawn を越えて復元されているので、進行中の既存 job があればその jobId を返す（`deduped: true`）。
+  それを `deshi_run_poll` で待つ。**新しい job は作られない**。
+- poll の結果（completed / failed / timedOut / jobEvicted）に従って通常どおり応答する。
+- **poll せずに「接続が切れた」「失敗した」と決めつけて謝らない。** これが #523 の誤動作。
+
 ### やってはいけないこと
 
 - **自分の知識で答える / 「知らない・情報が無い」と返す** → 必ず `deshi_run_start` に流す（検索・判断は deshi の責務）
