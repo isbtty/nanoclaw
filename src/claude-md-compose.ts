@@ -11,8 +11,7 @@
  *
  * Runs on every spawn from `container-runner.buildMounts()`. Deterministic —
  * same inputs produce the same CLAUDE.md, and stale fragments are pruned.
- *
- * See `docs/claude-md-composition.md` for the full design.
+ * The composition order and fragment sources are documented inline above.
  */
 import fs from 'fs';
 import path from 'path';
@@ -21,8 +20,13 @@ import { GROUPS_DIR } from './config.js';
 import type { McpServerConfig } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { fetchDeshiDelegationFragment } from './deshi/fetch-delegation-fragment.js';
+import { readGroupPersona } from './group-persona.js';
 import { log } from './log.js';
 import type { AgentGroup } from './types.js';
+
+// Fragment holding a template's persona prepend. Imported FIRST (before the
+// shared base) so the persona is the top of the composed system prompt.
+const PERSONA_FRAGMENT = 'persona.md';
 
 // Symlink targets are container paths — dangling on host (hence the readlink
 // dance instead of existsSync), valid inside the container via RO mounts.
@@ -131,6 +135,13 @@ export async function composeGroupClaudeMd(group: AgentGroup): Promise<void> {
     }
   }
 
+  // Template persona (if any) — inline so it survives the prune below; imported
+  // first (see the imports assembly) so it prepends the composed system prompt.
+  const persona = readGroupPersona(groupDir);
+  if (persona) {
+    desired.set(PERSONA_FRAGMENT, { type: 'inline', content: persona });
+  }
+
   // Reconcile: drop stale, write desired.
   for (const existing of fs.readdirSync(fragmentsDir)) {
     if (!desired.has(existing)) {
@@ -146,9 +157,14 @@ export async function composeGroupClaudeMd(group: AgentGroup): Promise<void> {
     }
   }
 
-  // Composed entry — imports only.
-  const imports = ['@./.claude-shared.md'];
-  for (const name of [...desired.keys()].sort()) {
+  // Composed entry — imports only. Persona first (top of the system prompt),
+  // then the shared base, then the remaining fragments sorted.
+  const imports: string[] = [];
+  if (desired.has(PERSONA_FRAGMENT)) {
+    imports.push(`@./.claude-fragments/${PERSONA_FRAGMENT}`);
+  }
+  imports.push('@./.claude-shared.md');
+  for (const name of [...desired.keys()].filter((n) => n !== PERSONA_FRAGMENT).sort()) {
     imports.push(`@./.claude-fragments/${name}`);
   }
   const body = [COMPOSED_HEADER, ...imports, ''].join('\n');
