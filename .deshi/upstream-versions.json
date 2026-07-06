@@ -10,8 +10,8 @@
       "policy": "target"
     },
     "channels": {
-      "sha": "8e91d37bc9c14b06580bda4b46c85f33cf755b15",
-      "lastSyncedAt": "2026-05-12T17:11:45+09:00",
+      "sha": "90dd87df7349a6fe37fdc59e8e248c423df78822",
+      "lastSyncedAt": "2026-07-06T16:06:34+09:00",
       "installed": [
         "slack",
         "discord",

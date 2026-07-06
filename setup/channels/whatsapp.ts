@@ -428,7 +428,7 @@ async function askChatPhone(authedPhone: string): Promise<string> {
   return phone;
 }
 
-/** Persist ASSISTANT_HAS_OWN_NUMBER=true to .env. */
+/** Persist ASSISTANT_HAS_OWN_NUMBER=true to .env and data/env/env. */
 function writeAssistantHasOwnNumber(): void {
   const envPath = path.join(process.cwd(), '.env');
   let contents = '';
@@ -447,6 +447,11 @@ function writeAssistantHasOwnNumber(): void {
     contents += 'ASSISTANT_HAS_OWN_NUMBER=true\n';
   }
   fs.writeFileSync(envPath, contents);
+
+  // Container reads from data/env/env.
+  const containerEnvDir = path.join(process.cwd(), 'data', 'env');
+  fs.mkdirSync(containerEnvDir, { recursive: true });
+  fs.copyFileSync(envPath, path.join(containerEnvDir, 'env'));
 }
 
 async function resolveAgentName(): Promise<string> {

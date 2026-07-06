@@ -1,42 +1,36 @@
 # Remove WeChat Channel
 
-Every step is idempotent — safe to re-run.
+Undo `/add-wechat`.
 
-## 1. Remove the adapter
+### 1. Remove credentials
 
-Delete the self-registration import from `src/channels/index.ts` (skip if already gone):
-
-```typescript
-import './wechat.js';
-```
-
-Then delete the copied adapter and its registration test:
+Delete WeChat lines from `.env`:
 
 ```bash
-rm -f src/channels/wechat.ts src/channels/wechat-registration.test.ts
+sed -i.bak '/^WECHAT_ENABLED=/d' .env && rm -f .env.bak
+cp .env data/env/env
 ```
 
-## 2. Remove credentials
-
-Remove `WECHAT_ENABLED` from `.env`, then re-sync to the container:
+### 2. Remove adapter and import
 
 ```bash
-mkdir -p data/env && cp .env data/env/env
+rm -f src/channels/wechat.ts
+sed -i.bak "/import '\.\/wechat\.js';/d" src/channels/index.ts && rm -f src/channels/index.ts.bak
 ```
 
-## 3. Remove the package
+### 3. Uninstall the package
 
 ```bash
-pnpm uninstall wechat-ilink-client
+pnpm remove wechat-ilink-client
 ```
 
-## 4. Remove saved auth + sync state
+### 4. Remove saved auth + sync state
 
 ```bash
 rm -rf data/wechat
 ```
 
-## 5. Remove DB wiring
+### 5. Remove DB wiring
 
 ```sql
 -- Remove any sessions first (foreign key)
@@ -45,13 +39,11 @@ DELETE FROM messaging_group_agents WHERE messaging_group_id IN (SELECT id FROM m
 DELETE FROM messaging_groups WHERE channel_type = 'wechat';
 ```
 
-## 6. Rebuild and restart
-
-Run from your NanoClaw project root:
+### 6. Rebuild and restart
 
 ```bash
 pnpm run build
-source setup/lib/install-slug.sh
-launchctl kickstart -k gui/$(id -u)/$(launchd_label)  # macOS
-# Linux: systemctl --user restart $(systemd_unit)
+systemctl --user restart nanoclaw   # Linux
+# or
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
 ```

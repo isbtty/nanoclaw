@@ -16,7 +16,6 @@ NanoClaw doesn't ship channels in trunk. This skill copies the Slack adapter in 
 Skip to **Credentials** if all of these are already in place:
 
 - `src/channels/slack.ts` exists
-- `src/channels/slack-registration.test.ts` exists
 - `src/channels/index.ts` contains `import './slack.js';`
 - `@chat-adapter/slack` is listed in `package.json` dependencies
 
@@ -28,11 +27,10 @@ Otherwise continue. Every step below is safe to re-run.
 git fetch origin channels
 ```
 
-### 2. Copy the adapter and its registration test
+### 2. Copy the adapter
 
 ```bash
-git show origin/channels:src/channels/slack.ts                 > src/channels/slack.ts
-git show origin/channels:src/channels/slack-registration.test.ts > src/channels/slack-registration.test.ts
+git show origin/channels:src/channels/slack.ts > src/channels/slack.ts
 ```
 
 ### 3. Append the self-registration import
@@ -49,16 +47,11 @@ import './slack.js';
 pnpm install @chat-adapter/slack@4.29.0
 ```
 
-### 5. Build and validate
+### 5. Build
 
 ```bash
 pnpm run build
-pnpm exec vitest run src/channels/slack-registration.test.ts
 ```
-
-Both must be clean before proceeding. `slack-registration.test.ts` is the one integration test: it imports the real channel barrel and asserts the registry contains `slack`. It goes red if the `import './slack.js';` line is deleted or drifts, if the barrel fails to evaluate, or if `@chat-adapter/slack` isn't installed (the import throws) — so it also implicitly verifies the dependency from step 4. The adapter also calls core's `createChatSdkBridge(...)`; that typed core-API consumption is guarded by `pnpm run build`.
-
-End-to-end message delivery against a real Slack workspace is verified manually once the service is running — see Next Steps and the webhook setup above.
 
 ## Credentials
 
@@ -67,7 +60,7 @@ End-to-end message delivery against a real Slack workspace is verified manually 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App** > **From scratch**
 2. Name it (e.g., "NanoClaw") and select your workspace
 3. Go to **OAuth & Permissions** and add Bot Token Scopes:
-   - `chat:write`, `im:write`, `channels:history`, `groups:history`, `im:history`, `channels:read`, `groups:read`, `users:read`, `reactions:write`, `files:read`, `files:write`
+   - `chat:write`, `channels:history`, `groups:history`, `im:history`, `channels:read`, `groups:read`, `users:read`, `reactions:write`
 4. Click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-...`)
 5. Go to **Basic Information** and copy the **Signing Secret**
 
@@ -79,32 +72,41 @@ End-to-end message delivery against a real Slack workspace is verified manually 
 ### Event Subscriptions
 
 8. Go to **Event Subscriptions** and toggle **Enable Events**
-9. Set the **Request URL** to `https://your-domain/webhook/slack` — Slack will send a verification challenge; it must pass before you can save
+9. **Webhook mode:** set the **Request URL** to `https://your-domain/webhook/slack` — Slack will send a verification challenge; it must pass before you can save. For **Socket Mode** (below), skip the Request URL.
 10. Under **Subscribe to bot events**, add:
     - `message.channels`, `message.groups`, `message.im`, `app_mention`
 11. Click **Save Changes**
+12. Slack will show a banner asking you to **reinstall the app** — click it to apply the new event subscriptions
 
-### Interactivity
+### Socket Mode (optional — no public URL)
 
-12. Go to **Interactivity & Shortcuts** and toggle **Interactivity** on
-13. Set the **Request URL** to the same `https://your-domain/webhook/slack`
-14. Click **Save Changes**
-15. Slack will show a banner asking you to **reinstall the app** — click it to apply the new settings
+Socket Mode delivers events over an outbound WebSocket the bot opens to Slack, so the host needs **no public HTTPS endpoint** — ideal for local dev or a host behind NAT/a firewall. Setting `SLACK_APP_TOKEN` is what flips the adapter into Socket Mode; without it the adapter stays in webhook mode.
+
+13. Go to **Basic Information** > **App-Level Tokens** > **Generate Token and Scopes**, add the `connections:write` scope, and copy the token (`xapp-...`)
+14. Go to **Socket Mode** and toggle **Enable Socket Mode** on
+15. Keep **Event Subscriptions** enabled with the bot events above — under Socket Mode no Request URL is required
 
 ### Configure environment
 
-Add to `.env`:
+Add to `.env` — **webhook mode**:
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_SIGNING_SECRET=your-signing-secret
 ```
 
+…or **Socket Mode** (no public URL; signing secret optional):
+
+```bash
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-level-token
+```
+
 Sync to container: `mkdir -p data/env && cp .env data/env/env`
 
-### Webhook server
+### Webhook server (webhook mode only)
 
-The Chat SDK bridge automatically starts a shared webhook server on port 3000 (configurable via `WEBHOOK_PORT` env var). The server handles `/webhook/slack` for Slack and other webhook-based adapters. This port must be publicly reachable from the internet for Slack to deliver events.
+In **webhook mode** the Chat SDK bridge automatically starts a shared webhook server on port 3000 (configurable via `WEBHOOK_PORT` env var). The server handles `/webhook/slack` for Slack and other webhook-based adapters. This port must be publicly reachable from the internet for Slack to deliver events. **In Socket Mode this is not needed** — skip this section if you set `SLACK_APP_TOKEN`.
 
 If running locally, discuss options for exposing the server — e.g. ngrok (`ngrok http 3000`), Cloudflare Tunnel, or a reverse proxy on a VPS. The resulting public URL becomes the base for `https://your-domain/webhook/slack`.
 

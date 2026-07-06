@@ -16,7 +16,6 @@ NanoClaw doesn't ship channels in trunk. This skill copies the Matrix adapter in
 Skip to **Credentials** if all of these are already in place:
 
 - `src/channels/matrix.ts` exists
-- `src/channels/matrix-registration.test.ts` exists
 - `src/channels/index.ts` contains `import './matrix.js';`
 - `@beeper/chat-adapter-matrix` is listed in `package.json` dependencies
 
@@ -28,11 +27,10 @@ Otherwise continue. Every step below is safe to re-run.
 git fetch origin channels
 ```
 
-### 2. Copy the adapter and its registration test
+### 2. Copy the adapter
 
 ```bash
-git show origin/channels:src/channels/matrix.ts                 > src/channels/matrix.ts
-git show origin/channels:src/channels/matrix-registration.test.ts > src/channels/matrix-registration.test.ts
+git show origin/channels:src/channels/matrix.ts > src/channels/matrix.ts
 ```
 
 ### 3. Append the self-registration import
@@ -71,16 +69,11 @@ node -e '
 
 Re-run this after every `pnpm install` that touches the adapter.
 
-### 6. Build and validate
+### 6. Build
 
 ```bash
 pnpm run build
-pnpm exec vitest run src/channels/matrix-registration.test.ts
 ```
-
-Both must be clean before proceeding. `matrix-registration.test.ts` is the one integration test: it imports the real channel barrel and asserts the registry contains `matrix`. It goes red if the `import './matrix.js';` line is deleted or drifts, if the barrel fails to evaluate, or if `@beeper/chat-adapter-matrix` isn't installed (the import throws) — so it also implicitly verifies the dependency from step 4. The adapter also calls core's `createChatSdkBridge(...)`; that typed core-API consumption is guarded by `pnpm run build`.
-
-End-to-end message delivery against a real Matrix homeserver is verified manually once the service is running — see Next Steps.
 
 ## Credentials
 

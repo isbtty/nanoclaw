@@ -8,7 +8,6 @@ import { createGitHubAdapter } from '@chat-adapter/github';
 import { readEnvFile } from '../env.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
-import { createAdapterLogger } from './adapter-logger.js';
 
 registerChannelAdapter('github', {
   factory: () => {
@@ -18,7 +17,6 @@ registerChannelAdapter('github', {
       token: env.GITHUB_TOKEN,
       webhookSecret: env.GITHUB_WEBHOOK_SECRET,
       userName: env.GITHUB_BOT_USERNAME,
-      logger: createAdapterLogger('github'),
     });
     return createChatSdkBridge({ adapter: githubAdapter, concurrency: 'queue', supportsThreads: true });
   },
