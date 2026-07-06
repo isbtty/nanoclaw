@@ -178,7 +178,13 @@ describe('buildMounts agent surfaces', () => {
         },
       ],
     };
-    const mounts = await buildMounts(ag, session('s2', ag.id), containerConfig(), 'surfaces-test-provider', contributed);
+    const mounts = await buildMounts(
+      ag,
+      session('s2', ag.id),
+      containerConfig(),
+      'surfaces-test-provider',
+      contributed,
+    );
 
     const containerPaths = mounts.map((m) => m.containerPath);
     expect(containerPaths).not.toContain('/home/node/.claude');
