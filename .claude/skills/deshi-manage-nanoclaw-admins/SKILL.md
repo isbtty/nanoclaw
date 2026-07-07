@@ -34,26 +34,42 @@ ncl roles list
 
 `role=owner`（消さない）と `role=admin, agent_group_id=NULL`（管理対象）を読み取って提示する。
 
+### メンバー ID の入力（`slack:` は付けさせない）
+
+ユーザーには **メンバー ID だけ**（`Uxxxxxxxx`）をチャットで入力してもらう。`slack:` プレフィックスは
+このスキルが内部で付ける（`slack:` + 入力値）。ユーザーが `slack:Uxxxxxxxx` と付けて入力してきた場合も
+そのまま受け付ける（二重付与しないよう、既に `slack:` で始まっていれば付け足さない）。
+
+**Slack メンバー ID の調べ方（この案内文をユーザーに表示する）:**
+
+> 📋 **メンバー ID の確認方法**
+> 1. Slack で対象の人の**アイコンや名前をクリック**してプロフィールを開く
+> 2. プロフィール右上（または名前の下）の「**⋮（その他）**」をクリック
+> 3. 「**メンバー ID をコピー**」を選ぶ（`U` から始まる英数字、例: `U01ABCDEF`）
+>
+> （見当たらない場合: プロフィール下部の「詳細情報を表示」→「メンバー ID」）
+
 ### `grant` — admin を追加
 
-対象の Slack user ID (`Uxxxxxxxx`) を owner に確認する（`AskUserQuestion`）。
-Slack user ID は Slack プロフィール → 「メンバー ID をコピー」で取得。
-
-1. users に未登録なら作成:
+1. 上の案内文を表示し、対象のメンバー ID を `AskUserQuestion` 等でチャットから受け取る。
+2. `slack:` を前置して user_id を組み立てる（例: 入力 `U01ABCDEF` → `slack:U01ABCDEF`）。
+3. users に未登録なら作成（表示名も分かれば確認して渡す）:
    ```bash
-   ncl users create --id slack:Uxxxxxxxx --kind slack --display_name "<名前>"
+   ncl users create --id slack:U01ABCDEF --kind slack --display_name "<名前>"
    ```
-2. グローバル admin を付与（`--group` を付けない = global。冪等: INSERT OR IGNORE）:
+4. グローバル admin を付与（`--group` を付けない = global。冪等: INSERT OR IGNORE）:
    ```bash
-   ncl roles grant --user slack:Uxxxxxxxx --role admin
+   ncl roles grant --user slack:U01ABCDEF --role admin
    ```
 
 既知ユーザーから選ぶ場合は先に `ncl users list` で slack ユーザーを提示してよい。
 
 ### `revoke` — admin を外す
 
+同様にメンバー ID だけをチャットから受け取り、`slack:` を前置して実行する:
+
 ```bash
-ncl roles revoke --user slack:Uxxxxxxxx --role admin
+ncl roles revoke --user slack:U01ABCDEF --role admin
 ```
 
 `--group` は付けない（global admin を外す）。該当が無ければ `ncl` が `role not found` を返すので
