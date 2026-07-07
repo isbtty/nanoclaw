@@ -108,7 +108,7 @@ describe('handleKnowledgeScopeCommand', () => {
     const handled = await handleKnowledgeScopeCommand(inputWith(KNOWLEDGE_SCOPE_COMMAND));
     expect(handled).toBe(true);
     expect(maybeDeliverScopeLinkMock).toHaveBeenCalledWith('ag-1', 'mg-1', 'line:Uowner');
-    expect(lastReplyText()).toContain('DM に送りました');
+    expect(lastReplyText()).toContain('DM または管理者用チャンネルに送りました');
   });
 
   it('non-owner: forwards the request to the owner DM (with context), requester gets a link-free ack', async () => {

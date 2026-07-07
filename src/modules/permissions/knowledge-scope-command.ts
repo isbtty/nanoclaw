@@ -212,7 +212,10 @@ export async function handleKnowledgeScopeCommand(input: KnowledgeScopeCommandIn
   if (input.userId && hasAdminPrivilege(input.userId, input.agentGroupId)) {
     const result = await maybeDeliverScopeLink(input.agentGroupId, input.messagingGroupId, input.userId);
     if (result.ok) {
-      await reply(input, '📩 知識の編集リンクを DM に送りました（10分有効・1回限り）。DM を確認してください。');
+      await reply(
+        input,
+        '📩 知識の編集リンクを DM または管理者用チャンネルに送りました（10分有効・1回限り）。ご確認ください。',
+      );
     } else {
       await reply(input, scopeFailureText(result.reason));
     }
