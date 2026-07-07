@@ -5,6 +5,8 @@
  * Two patterns: native adapters (implement directly) or Chat SDK bridge (wrap a Chat SDK adapter).
  */
 
+import type { ActionOutcome } from '../response-registry.js';
+
 /** Passed to the adapter at setup time. */
 export interface ChannelSetup {
   /** Called when an inbound message arrives from the platform. */
@@ -21,8 +23,16 @@ export interface ChannelSetup {
   /** Called when the adapter discovers metadata about a conversation. */
   onMetadata(platformId: string, name?: string, isGroup?: boolean): void;
 
-  /** Called when a user clicks a button/action in a card (e.g., ask_user_question response). */
-  onAction(questionId: string, selectedOption: string, userId: string): void;
+  /**
+   * Called when a user clicks a button/action in a card (e.g., ask_user_question response).
+   *
+   * Returns an {@link ActionOutcome} telling the adapter how to update the card
+   * once authorization has run (deshi#531): `apply` = show the answer + remove
+   * buttons; `keep` = leave the card actionable and optionally post `notify`.
+   * `void` is tolerated for test doubles and legacy adapters that ignore the
+   * result (the bridge falls back to `apply`).
+   */
+  onAction(questionId: string, selectedOption: string, userId: string): void | Promise<ActionOutcome>;
 }
 
 /** Delivery address used for reply-to overrides and (normally) the inbound's own origin. */

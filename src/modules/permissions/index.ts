@@ -28,7 +28,7 @@ import {
   type AccessGateResult,
 } from '../../router.js';
 import type { InboundEvent } from '../../channels/adapter.js';
-import { registerResponseHandler, type ResponsePayload } from '../../response-registry.js';
+import { registerResponseHandler, type ActionOutcome, type ResponsePayload } from '../../response-registry.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, MessagingGroupAgent } from '../../types.js';
@@ -223,7 +223,18 @@ setSenderScopeGate(
  * Deny: delete the row (no "deny list" — a future message re-triggers a
  * fresh card per ACTION-ITEMS item 5 "no denial persistence").
  */
-async function handleSenderApprovalResponse(payload: ResponsePayload): Promise<boolean> {
+/**
+ * Visible notice posted to the channel when a non-approver clicks an approval
+ * card (deshi#531). Intentionally not ephemeral — in a shared approval channel
+ * everyone (including the real admins) should see who tried and that it was
+ * refused, so the card is left actionable for the right person.
+ */
+function unauthorizedNotice(clickerId: string | null): string {
+  const who = (clickerId && getUser(clickerId)?.display_name) || clickerId || 'このユーザー';
+  return `⚠️ ${who} は承認権限がありません（owner/admin のみ操作できます）`;
+}
+
+async function handleSenderApprovalResponse(payload: ResponsePayload): Promise<boolean | ActionOutcome> {
   const row = getPendingSenderApproval(payload.questionId);
   if (!row) return false;
 
@@ -244,7 +255,9 @@ async function handleSenderApprovalResponse(payload: ResponsePayload): Promise<b
       clickerId,
       expectedApprover: row.approver_user_id,
     });
-    return true; // claim the response so it's not unclaimed-logged, but do nothing
+    // Claim the response, but keep the card actionable and tell the channel why
+    // (deshi#531): the real approver must still be able to click.
+    return { card: 'keep', notify: unauthorizedNotice(clickerId) };
   }
   const approverId = clickerId;
   const approved = payload.value === 'approve';
@@ -308,7 +321,7 @@ setChannelRequestGate(async (mg, event) => {
  *                     captures the reply and creates immediately)
  *   reject          — set denied_at, delete pending row
  */
-async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<boolean> {
+async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<boolean | ActionOutcome> {
   const row = getPendingChannelApproval(payload.questionId);
   if (!row) return false;
 
@@ -325,7 +338,8 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
       clickerId,
       expectedApprover: row.approver_user_id,
     });
-    return true;
+    // Keep the card actionable for the real approver + tell the channel (deshi#531).
+    return { card: 'keep', notify: unauthorizedNotice(clickerId) };
   }
   const approverId = clickerId;
 

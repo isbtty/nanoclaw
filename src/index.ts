@@ -36,18 +36,27 @@ import { enforceUpgradeTripwire } from './upgrade-state.js';
 // effects, and the modules call registerResponseHandler/onShutdown at top
 // level — which would hit a TDZ error if the arrays lived here. Re-exported
 // here so existing callers see the same surface.
-import { getResponseHandlers, getShutdownCallbacks, type ResponsePayload } from './response-registry.js';
+import {
+  getResponseHandlers,
+  getShutdownCallbacks,
+  type ActionOutcome,
+  type ResponsePayload,
+} from './response-registry.js';
 
-async function dispatchResponse(payload: ResponsePayload): Promise<void> {
+async function dispatchResponse(payload: ResponsePayload): Promise<ActionOutcome> {
   for (const handler of getResponseHandlers()) {
     try {
-      const claimed = await handler(payload);
-      if (claimed) return;
+      const result = await handler(payload);
+      if (result === false) continue; // not this handler's question
+      if (result === true) return { card: 'apply' }; // claimed, default success
+      return result; // claimed with explicit card outcome (e.g. reject → keep)
     } catch (err) {
       log.error('Response handler threw', { questionId: payload.questionId, err });
     }
   }
   log.warn('Unclaimed response', { questionId: payload.questionId, value: payload.value });
+  // Unclaimed → keep the pre-#531 optimistic card update.
+  return { card: 'apply' };
 }
 
 // Channel barrel — each enabled channel self-registers on import.
@@ -139,7 +148,10 @@ async function main(): Promise<void> {
         });
       },
       onAction(questionId, selectedOption, userId) {
-        dispatchResponse({
+        // Return the dispatch outcome so the bridge can update the card AFTER
+        // authorization runs (deshi#531). dispatchResponse never rejects (it
+        // catches per-handler), so the bridge always gets a usable outcome.
+        return dispatchResponse({
           questionId,
           value: selectedOption,
           userId,
@@ -149,8 +161,6 @@ async function main(): Promise<void> {
           // pending_question / pending_approval row.
           platformId: '',
           threadId: null,
-        }).catch((err) => {
-          log.error('Failed to handle question response', { questionId, err });
         });
       },
     };

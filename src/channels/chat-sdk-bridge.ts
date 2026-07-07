@@ -19,6 +19,7 @@ import {
   type Message as ChatMessage,
 } from 'chat';
 import { log } from '../log.js';
+import type { ActionOutcome } from '../response-registry.js';
 import { SqliteStateAdapter } from '../state-sqlite.js';
 import { registerWebhookAdapter } from '../webhook-server.js';
 import { getAskQuestionRender } from '../db/sessions.js';
@@ -480,19 +481,40 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         const matched = render?.options.find((o) => o.value === selectedOption);
         const selectedLabel = matched?.selectedLabel ?? selectedOption ?? '(clicked)';
 
-        // Update the card to show the selected answer, who acted, and remove buttons
         const actorName = event.user?.userName || event.user?.fullName || '';
         const byLine = actorName ? ` — ${actorName}` : '';
+        const tid = event.threadId;
+
+        // Dispatch FIRST, then update the card based on the authorization result.
+        // Pre-#531 the editMessage below ran unconditionally BEFORE dispatch, so a
+        // non-approver's click consumed the card (buttons removed, "Connected"
+        // label) even though the backend rejected it — blocking the real approver
+        // and leaving the pending row dangling. See deshi#531.
+        let outcome: ActionOutcome = { card: 'apply' };
         try {
-          const tid = event.threadId;
-          await adapter.editMessage(tid, event.messageId, {
-            markdown: `${title}\n\n${selectedLabel}${byLine}`,
-          });
+          outcome = (await setupConfig.onAction(questionId, selectedOption, userId)) ?? { card: 'apply' };
         } catch (err) {
-          log.warn('Failed to update card after action', { err });
+          log.error('onAction dispatch failed', { questionId, err });
         }
 
-        setupConfig.onAction(questionId, selectedOption, userId);
+        if (outcome.card === 'apply') {
+          // Authorized (or non-gated card): show the answer + who acted, drop buttons.
+          try {
+            await adapter.editMessage(tid, event.messageId, {
+              markdown: `${title}\n\n${selectedLabel}${byLine}`,
+            });
+          } catch (err) {
+            log.warn('Failed to update card after action', { err });
+          }
+        } else if (outcome.notify) {
+          // Rejected: leave the card actionable so the real approver can still
+          // click; post a visible notice to the channel (deshi#531).
+          try {
+            await adapter.postMessage(tid, { markdown: outcome.notify });
+          } catch (err) {
+            log.warn('Failed to post action notice', { err });
+          }
+        }
       });
 
       await chat.initialize();

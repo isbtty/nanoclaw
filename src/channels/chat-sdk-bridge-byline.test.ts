@@ -31,7 +31,12 @@ interface CapturedEdit {
   markdown: string;
 }
 
-function makeAdapter(edits: CapturedEdit[]): Adapter {
+interface CapturedPost {
+  threadId: string;
+  markdown: string;
+}
+
+function makeAdapter(edits: CapturedEdit[], posts: CapturedPost[]): Adapter {
   return {
     name: 'stub',
     initialize: async () => {},
@@ -39,13 +44,21 @@ function makeAdapter(edits: CapturedEdit[]): Adapter {
     editMessage: async (threadId: string, messageId: string, content: { markdown: string }) => {
       edits.push({ threadId, messageId, markdown: content.markdown });
     },
+    postMessage: async (threadId: string, content: { markdown?: string }) => {
+      posts.push({ threadId, markdown: content.markdown ?? '' });
+      return { id: 'posted-1' };
+    },
   } as unknown as Adapter;
 }
 
-async function fireAction(user: Record<string, unknown>): Promise<{ edits: CapturedEdit[]; actions: string[] }> {
+async function fireAction(
+  user: Record<string, unknown>,
+  onActionResult?: { card: 'apply' | 'keep'; notify?: string },
+): Promise<{ edits: CapturedEdit[]; posts: CapturedPost[]; actions: string[] }> {
   const edits: CapturedEdit[] = [];
+  const posts: CapturedPost[] = [];
   const actions: string[] = [];
-  const adapter = makeAdapter(edits);
+  const adapter = makeAdapter(edits, posts);
   const bridge = createChatSdkBridge({ adapter, supportsThreads: false });
 
   await bridge.setup({
@@ -54,6 +67,7 @@ async function fireAction(user: Record<string, unknown>): Promise<{ edits: Captu
     onMetadata: () => {},
     onAction: (questionId: string, selectedOption: string, userId: string) => {
       actions.push(`${questionId}:${selectedOption}:${userId}`);
+      return onActionResult;
     },
   } as ChannelSetup);
 
@@ -71,7 +85,7 @@ async function fireAction(user: Record<string, unknown>): Promise<{ edits: Captu
     },
     undefined,
   );
-  return { edits, actions };
+  return { edits, posts, actions };
 }
 
 beforeEach(() => {
@@ -108,5 +122,28 @@ describe('chat-sdk-bridge approval-card byline', () => {
     expect(edits).toHaveLength(1);
     expect(edits[0].markdown).not.toContain('—');
     expect(edits[0].markdown).toContain('approve');
+  });
+
+  // deshi#531: a rejected click must NOT consume the card. The bridge leaves the
+  // buttons intact (no editMessage) and posts a visible notice instead.
+  it('keeps the card actionable and posts a notice when onAction returns card=keep', async () => {
+    const { edits, posts, actions } = await fireAction(
+      { userId: 'U9', userName: 'bystander' },
+      { card: 'keep', notify: '⚠️ bystander は承認権限がありません' },
+    );
+
+    expect(actions).toEqual(['q-1:approve:U9']); // dispatch still happened
+    expect(edits).toHaveLength(0); // card left untouched — buttons stay
+    expect(posts).toHaveLength(1);
+    expect(posts[0].threadId).toBe('T-1');
+    expect(posts[0].markdown).toContain('承認権限がありません');
+  });
+
+  it('still applies the card when onAction returns card=apply', async () => {
+    const { edits, posts } = await fireAction({ userId: 'U1', userName: 'gavriel' }, { card: 'apply' });
+
+    expect(edits).toHaveLength(1);
+    expect(edits[0].markdown).toContain('approve — gavriel');
+    expect(posts).toHaveLength(0);
   });
 });
