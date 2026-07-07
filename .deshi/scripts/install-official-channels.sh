@@ -88,6 +88,27 @@ if [[ ${#CHANNELS[@]} -eq 0 ]]; then
   exit 1
 fi
 
+# ---------- deshi: barrel 非 active channel ----------
+# installed[] に入っていて source は同期するが、src/channels/index.ts の barrel では
+# import を有効化しない channel。upstream の <ch>-registration.test.ts は「barrel を
+# 読んで当該 channel が登録済みか」を検証するため、barrel 非 active な channel の
+# registration test を取り込むと必ず red になる。そこでここに列挙した channel の
+# "-registration.test.ts" だけコピー対象から除外する (本体 .ts は同期する)。
+#
+#   matrix — @beeper/chat-adapter-matrix@0.2.0 が matrix-js-sdk の内部モジュールを
+#            拡張子なし ESM import で参照しており import 時にクラッシュする。barrel で
+#            有効化すると host boot / 全 barrel test を道連れに落とすため無効化必須。
+#            upstream 側で adapter が修正されたら barrel を active 化し、この行を外す。
+DESHI_BARREL_DISABLED=("matrix")
+
+deshi_is_barrel_disabled() {
+  local target="$1" c
+  for c in "${DESHI_BARREL_DISABLED[@]}"; do
+    [[ "$c" == "$target" ]] && return 0
+  done
+  return 1
+}
+
 echo "==> install-official-channels.sh"
 echo "    channels ref : $CHANNELS_REF ($(git rev-parse --short "$CHANNELS_REF"))"
 echo "    base ref     : $BASE_REF ($(git rev-parse --short "$BASE_REF"))"
@@ -165,6 +186,13 @@ for ch in "${CHANNELS[@]}"; do
       ')"
   if [[ -n "$src_files" ]]; then
     while IFS= read -r f; do
+      # deshi: barrel 非 active channel の registration test はコピーしない
+      # (barrel を読んで登録済みを assert するため、非 active だと必ず red になる)。
+      if [[ "$f" == *-registration.test.ts ]] && deshi_is_barrel_disabled "$ch"; then
+        [[ $DRY_RUN -eq 1 ]] && echo "  [dry-run] skip (barrel-disabled reg test): $f" \
+                             || echo "  skip (barrel-disabled reg test): $f"
+        continue
+      fi
       copy_if_exists "$CHANNELS_REF" "$f" && ch_imported=1
     done <<< "$src_files"
   fi

@@ -7,7 +7,6 @@ import { createTelegramAdapter } from '@chat-adapter/telegram';
 
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
-import { createAdapterLogger } from './adapter-logger.js';
 import { createMessagingGroup, getMessagingGroupByPlatform, updateMessagingGroup } from '../db/messaging-groups.js';
 import { grantRole, hasAnyOwner } from '../modules/permissions/db/user-roles.js';
 import { upsertUser } from '../modules/permissions/db/users.js';
@@ -204,7 +203,6 @@ registerChannelAdapter('telegram', {
     const telegramAdapter = createTelegramAdapter({
       botToken: token,
       mode: 'polling',
-      logger: createAdapterLogger('telegram'),
     });
     const bridge = createChatSdkBridge({
       adapter: telegramAdapter,

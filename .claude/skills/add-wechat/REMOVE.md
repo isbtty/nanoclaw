@@ -41,12 +41,9 @@ DELETE FROM messaging_groups WHERE channel_type = 'wechat';
 
 ### 6. Rebuild and restart
 
-Run from your NanoClaw project root:
-
 ```bash
 pnpm run build
-source setup/lib/install-slug.sh
-systemctl --user restart $(systemd_unit)              # Linux
+systemctl --user restart nanoclaw   # Linux
 # or
-launchctl kickstart -k gui/$(id -u)/$(launchd_label)  # macOS
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
 ```

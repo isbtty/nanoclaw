@@ -11,7 +11,7 @@ import { TIMEZONE, formatLocalTime } from './timezone.js';
  */
 export type CommandCategory = 'admin' | 'filtered' | 'passthrough' | 'none';
 
-const ADMIN_COMMANDS = new Set(['/remote-control', '/clear', '/compact', '/context', '/cost', '/files']);
+const ADMIN_COMMANDS = new Set(['/remote-control', '/clear', '/compact', '/context', '/cost', '/files', '/upload-trace']);
 const FILTERED_COMMANDS = new Set(['/help', '/login', '/logout', '/doctor', '/config', '/start']);
 
 export interface CommandInfo {
@@ -266,6 +266,28 @@ function parseContent(json: string): any {
 
 function escapeXml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * A one-shot system note prepended to the first prompt after the container was
+ * respawned while a prior turn was still processing (isbtty/deshi#523).
+ *
+ * Without it, an agent resuming a transcript that shows an interrupted tool call
+ * — e.g. a deshi delegation (`deshi_run_poll`) still in flight when the host
+ * killed the container — tends to tell the user "the connection was lost" or "it
+ * failed". In reality the host merely restarted the container and the delegated
+ * work may well have completed in the background. This note reframes the
+ * situation so the agent verifies state before apologizing.
+ */
+export function formatRespawnNote(): string {
+  return (
+    '<system-note kind="respawn">\n' +
+    'あなたは直前のターンの処理中に、ホストによってコンテナを再起動されました。' +
+    'ユーザーとの接続が切れたわけでも、あなたの処理が失敗したわけでもありません。' +
+    'バックグラウンドに委譲した作業（deshi への依頼など）は、その後に完了している可能性があります。' +
+    '「接続が切れた」「失敗した」と即断して謝らず、まず状態を確認してから応答してください。\n' +
+    '</system-note>'
+  );
 }
 
 /**

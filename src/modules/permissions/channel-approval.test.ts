@@ -228,7 +228,7 @@ describe('unknown-channel registration flow', () => {
       agent_group_id: string;
     };
     expect(mga).toBeDefined();
-    expect(mga.engage_mode).toBe('mention-sticky'); // group (threadId != null)
+    expect(mga.engage_mode).toBe('mention'); // group (threadId != null) — deshi default (90c54fd: mention-sticky→mention)
     expect(mga.engage_pattern).toBeNull();
     expect(mga.sender_scope).toBe('known');
     expect(mga.ignored_message_policy).toBe('accumulate');

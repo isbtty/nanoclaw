@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb } from './db/connection.js';
 import { getPendingMessages } from './db/messages-in.js';
-import { formatMessages, stripInternalTags } from './formatter.js';
+import { formatMessages, formatRespawnNote, stripInternalTags } from './formatter.js';
 import { TIMEZONE } from './timezone.js';
 
 beforeEach(() => {
@@ -162,6 +162,23 @@ describe('XML escaping', () => {
     const result = formatMessages(getPendingMessages());
     expect(result).toContain('sender="A &amp; B &lt;Co&gt;"');
     expect(result).toContain('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
+  });
+});
+
+describe('formatRespawnNote', () => {
+  it('is a self-contained <system-note kind="respawn"> block', () => {
+    const note = formatRespawnNote();
+    expect(note).toContain('<system-note kind="respawn">');
+    expect(note).toContain('</system-note>');
+  });
+
+  it('reframes a restart as not-a-disconnect and not-a-failure', () => {
+    // Regression guard for isbtty/deshi#523: the note must steer the agent away
+    // from the spurious "connection lost / failed" apology after a host respawn.
+    const note = formatRespawnNote();
+    expect(note).toContain('再起動');
+    expect(note).toContain('接続が切れた');
+    expect(note).toContain('失敗');
   });
 });
 

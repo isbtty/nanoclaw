@@ -4,14 +4,14 @@
     "repo": "nanocoai/nanoclaw",
     "main": {
       "tag": null,
-      "sha": "3601a8a1febb6ec16391099981c533798a203e3e",
-      "lastSyncedAt": "2026-05-31T18:15:47+09:00",
-      "lastSyncedBy": "ishibe.tatsuya@gmail.com",
+      "sha": "b6cb53e21c890cb090dd5b9270003a04597f5824",
+      "lastSyncedAt": "2026-07-06T15:03:53+09:00",
+      "lastSyncedBy": "han2210mh@gmail.com",
       "policy": "target"
     },
     "channels": {
-      "sha": "8e91d37bc9c14b06580bda4b46c85f33cf755b15",
-      "lastSyncedAt": "2026-05-12T17:11:45+09:00",
+      "sha": "90dd87df7349a6fe37fdc59e8e248c423df78822",
+      "lastSyncedAt": "2026-07-06T16:06:34+09:00",
       "installed": [
         "slack",
         "discord",

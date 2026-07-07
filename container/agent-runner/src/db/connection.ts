@@ -48,7 +48,11 @@ export function openInboundDb(): Database {
   // so the singleton survives for the rest of the test.
   if (_testMode && _inbound) {
     const db = _inbound;
-    return { prepare: (sql: string) => db.prepare(sql), exec: (sql: string) => db.exec(sql), close: () => {} } as unknown as Database;
+    return {
+      prepare: (sql: string) => db.prepare(sql),
+      exec: (sql: string) => db.exec(sql),
+      close: () => {},
+    } as unknown as Database;
   }
   const db = new Database(DEFAULT_INBOUND_PATH, { readonly: true });
   db.exec('PRAGMA busy_timeout = 5000');
@@ -171,9 +175,15 @@ export function touchHeartbeat(): void {
  * Clear stale processing_ack entries on container startup.
  * If the previous container crashed, 'processing' entries are leftover.
  * Clearing them lets the new container re-process those messages.
+ *
+ * Returns the number of rows cleared. A non-zero count means the previous
+ * container died mid-turn (it had marked messages 'processing' but never
+ * reached 'completed') — used by the poll loop to flag a respawn-after-
+ * interruption so the resumed agent doesn't mistake it for a lost connection
+ * (isbtty/deshi#523).
  */
-export function clearStaleProcessingAcks(): void {
-  getOutboundDb().prepare("DELETE FROM processing_ack WHERE status = 'processing'").run();
+export function clearStaleProcessingAcks(): number {
+  return getOutboundDb().prepare("DELETE FROM processing_ack WHERE status = 'processing'").run().changes;
 }
 
 /** For tests — creates in-memory DBs with the session schemas. */
@@ -259,12 +269,4 @@ export function closeSessionDb(): void {
   _testMode = false;
   _outbound?.close();
   _outbound = null;
-}
-
-/**
- * @deprecated Use getInboundDb() / getOutboundDb() instead.
- * Kept for backward compatibility during migration.
- */
-export function getSessionDb(): Database {
-  return getInboundDb();
 }
