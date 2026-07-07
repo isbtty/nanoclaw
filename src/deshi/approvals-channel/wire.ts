@@ -39,7 +39,10 @@ import { upsertUserDm } from '../../modules/permissions/db/user-dms.js';
 import { getAdminsOfAgentGroup, getGlobalAdmins, getOwners } from '../../modules/permissions/db/user-roles.js';
 
 export interface WireOptions {
-  /** 共有チャンネルの platform_id（Slack channel ID `Cxxxx`）。 */
+  /**
+   * 共有チャンネルの ID。生 ID（`Cxxxx`）でも adapter エンコード済み
+   * （`slack:Cxxxx`）でも渡せる。内部で `<channelType>:<id>` に正規化する。
+   */
   platformId: string;
   /** channel_type。deshi#517 は Slack 単一なので既定 `'slack'`。 */
   channelType?: string;
@@ -63,6 +66,12 @@ export interface WireResult {
    * （例: Slack 単一運用で `telegram:` の owner）
    */
   skipped: string[];
+  /**
+   * 同一チャンネルの、prefix 無し生 ID（`Cxxxx`）で作られた壊れた mg を検出した場合の
+   * その id。deshi#528 の修正前に配線した環境の残骸。存在すれば呼び出し側（run.ts）が
+   * 手動 cleanup を促す。無ければ undefined。
+   */
+  legacyMessagingGroupId?: string;
 }
 
 // user_id の `:` 前プレフィックスを channel_type とみなす。deshi#517 は Slack 単一
@@ -75,6 +84,22 @@ function channelTypeOf(userId: string): string | null {
 }
 
 /**
+ * チャンネル ID を adapter エンコード形式（`<channelType>:<id>`）に正規化する。
+ * router / delivery はこの形式で messaging_group を lookup / auto-create し、
+ * delivery は `platform_id` をエンコード済み thread ID としてそのまま使う
+ * （`src/router.ts:190-206`、`src/channels/chat-sdk-bridge.ts:570-573`）。
+ * 生 ID のまま保存すると承認カードが配信されず、router が別 mg を auto-create して
+ * `denied_at` も効かなくなる（deshi#528）。
+ *
+ * 生 ID（`Cxxxx`）でも既にエンコード済み（`slack:Cxxxx`）でも冪等に正しい形へ揃える。
+ * Slack の生 ID には `:` を含まない前提。将来他チャンネルに広げる場合は
+ * user-dm.ts / router の platformId エンコード規約に合わせること。
+ */
+function encodePlatformId(channelType: string, raw: string): string {
+  return raw.startsWith(`${channelType}:`) ? raw : `${channelType}:${raw}`;
+}
+
+/**
  * 共有チャンネルの mg を find-or-create し、対象 channel_type の identity を持つ
  * owner/admin の `user_dms` をそこへ upsert する。冪等（再実行で同じ mg に upsert
  * されるだけ）。DB は呼び出し前に `initDb()` 済みであること。
@@ -82,6 +107,16 @@ function channelTypeOf(userId: string): string | null {
 export function routeApprovalsToChannel(opts: WireOptions): WireResult {
   const channelType = opts.channelType ?? 'slack';
   const now = new Date().toISOString();
+
+  // platform_id は必ず adapter エンコード形式（`<channelType>:<id>`）に揃える。
+  // router / delivery がこの形式で lookup / 配信するため（deshi#528）。
+  const platformId = encodePlatformId(channelType, opts.platformId);
+
+  // deshi#528 修正前に prefix 無し生 ID で作られた壊れた mg の検出用（cleanup 促し）。
+  // 正規化後の platformId から prefix を外した生 ID で引く。生 ID == 正規化後
+  // （= 元から prefix 無し channel_type だった等）の場合は誤検出になるので除外。
+  const rawId = platformId.slice(channelType.length + 1);
+  const legacyMg = rawId !== platformId ? getMessagingGroupByPlatform(channelType, rawId) : undefined;
 
   // 1) 共有チャンネルの messaging_group を find-or-create。
   //    getMessagingGroupByPlatform は find-only なので、無ければ自前で作る。
@@ -98,14 +133,14 @@ export function routeApprovalsToChannel(opts: WireOptions): WireResult {
   //
   //    既存 mg を再利用する場合は属性を一切変更しない（他用途のチャンネルを
   //    誤指定しても壊さない。skill は専用チャンネルの新規作成を案内する）。
-  let mg: MessagingGroup | undefined = getMessagingGroupByPlatform(channelType, opts.platformId);
+  let mg: MessagingGroup | undefined = getMessagingGroupByPlatform(channelType, platformId);
   let created = false;
   if (!mg) {
     const mgId = `mg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     mg = {
       id: mgId,
       channel_type: channelType,
-      platform_id: opts.platformId,
+      platform_id: platformId,
       name: opts.name ?? null,
       is_group: 1,
       unknown_sender_policy: 'strict',
@@ -116,7 +151,7 @@ export function routeApprovalsToChannel(opts: WireOptions): WireResult {
     created = true;
     log.info('routeApprovalsToChannel: created shared messaging_group', {
       channelType,
-      platformId: opts.platformId,
+      platformId,
       messagingGroupId: mgId,
     });
   }
@@ -153,5 +188,17 @@ export function routeApprovalsToChannel(opts: WireOptions): WireResult {
     skipped: skipped.length,
   });
 
-  return { messagingGroupId: mg.id, created, redirected, skipped };
+  // legacy（prefix 無し）mg が正規 mg とは別に残っていれば報告する。FK 参照
+  // （pending_channel_approvals 等）があり得るので自動削除はせず、呼び出し側が
+  // 手動 cleanup を判断する（deshi#528「実施済みの手動復旧」参照）。
+  const legacyMessagingGroupId = legacyMg && legacyMg.id !== mg.id ? legacyMg.id : undefined;
+  if (legacyMessagingGroupId) {
+    log.warn('routeApprovalsToChannel: found leftover prefix-less messaging_group for this channel', {
+      channelType,
+      canonicalMessagingGroupId: mg.id,
+      legacyMessagingGroupId,
+    });
+  }
+
+  return { messagingGroupId: mg.id, created, redirected, skipped, legacyMessagingGroupId };
 }

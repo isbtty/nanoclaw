@@ -4,7 +4,7 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../../db/index.js';
-import { createMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
+import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getUserDm } from '../../modules/permissions/db/user-dms.js';
 import { createUser } from '../../modules/permissions/db/users.js';
 import { grantRole } from '../../modules/permissions/db/user-roles.js';
@@ -44,13 +44,72 @@ describe('routeApprovalsToChannel', () => {
     const res = routeApprovalsToChannel({ platformId: 'C0SHARED', name: '承認' });
 
     expect(res.created).toBe(true);
-    const mg = getMessagingGroupByPlatform('slack', 'C0SHARED');
+    // platform_id は adapter エンコード形式（slack:）で保存される（deshi#528）。
+    const mg = getMessagingGroupByPlatform('slack', 'slack:C0SHARED');
     expect(mg).toBeDefined();
+    expect(mg?.platform_id).toBe('slack:C0SHARED');
     expect(mg?.is_group).toBe(1);
     expect(mg?.unknown_sender_policy).toBe('strict');
     // denied_at を立てて router の channel 登録 escalation を確実に殺す（配信は妨げない）。
     expect(mg?.denied_at).toBeTruthy();
     expect(res.messagingGroupId).toBe(mg?.id);
+  });
+
+  it('normalizes a raw channel id to <channelType>:<id> (deshi#528)', () => {
+    seedOwner('slack:UOWNER');
+
+    routeApprovalsToChannel({ platformId: 'C0SHARED' });
+
+    // 生 ID では引けず、prefix 付きで引ける。
+    expect(getMessagingGroupByPlatform('slack', 'C0SHARED')).toBeUndefined();
+    expect(getMessagingGroupByPlatform('slack', 'slack:C0SHARED')?.platform_id).toBe('slack:C0SHARED');
+  });
+
+  it('accepts an already-prefixed channel id without double-encoding', () => {
+    seedOwner('slack:UOWNER');
+
+    const res = routeApprovalsToChannel({ platformId: 'slack:C0SHARED' });
+
+    const mg = getMessagingGroupByPlatform('slack', 'slack:C0SHARED');
+    expect(mg?.platform_id).toBe('slack:C0SHARED');
+    expect(res.messagingGroupId).toBe(mg?.id);
+  });
+
+  it('converges raw-then-prefixed input to one mg with no duplicate user_dms', () => {
+    seedOwner('slack:UOWNER');
+
+    const first = routeApprovalsToChannel({ platformId: 'C0SHARED' });
+    const second = routeApprovalsToChannel({ platformId: 'slack:C0SHARED' });
+
+    expect(second.created).toBe(false);
+    expect(second.messagingGroupId).toBe(first.messagingGroupId);
+    // mg は 1 本、user_dms も 1 行に収束する。
+    expect(getMessagingGroupByPlatform('slack', 'slack:C0SHARED')).toBeDefined();
+    expect(getUserDm('slack:UOWNER', 'slack')?.messaging_group_id).toBe(first.messagingGroupId);
+  });
+
+  it('reports a leftover prefix-less messaging_group as legacy (deshi#528 migration)', () => {
+    seedOwner('slack:UOWNER');
+    // 修正前の壊れた mg（生 ID）が既存の状態。
+    createMessagingGroup({
+      id: 'mg-broken',
+      channel_type: 'slack',
+      platform_id: 'C0SHARED',
+      name: '壊れ',
+      is_group: 1,
+      unknown_sender_policy: 'strict',
+      created_at: now(),
+    });
+
+    const res = routeApprovalsToChannel({ platformId: 'C0SHARED' });
+
+    // 正規 mg（slack:）を新規作成し、壊れた mg を legacy として報告。自動削除はしない。
+    expect(res.created).toBe(true);
+    expect(res.messagingGroupId).not.toBe('mg-broken');
+    expect(res.legacyMessagingGroupId).toBe('mg-broken');
+    expect(getMessagingGroup('mg-broken')).toBeDefined();
+    // user_dms は正規 mg に向く。
+    expect(getUserDm('slack:UOWNER', 'slack')?.messaging_group_id).toBe(res.messagingGroupId);
   });
 
   it('dedupes a user who is both owner and global admin (redirected once)', () => {
@@ -65,11 +124,11 @@ describe('routeApprovalsToChannel', () => {
 
   it('does not mutate a pre-existing external messaging_group when reusing it', () => {
     seedOwner('slack:UOWNER');
-    // 他用途の通常グループ（is_group=0, denied_at 無し）が同じ platform_id で既存の場合。
+    // router が作った正規形（slack:）の通常グループが既存の場合。
     createMessagingGroup({
       id: 'mg-existing',
       channel_type: 'slack',
-      platform_id: 'C0SHARED',
+      platform_id: 'slack:C0SHARED',
       name: '業務チャンネル',
       is_group: 0,
       unknown_sender_policy: 'public',
@@ -80,7 +139,7 @@ describe('routeApprovalsToChannel', () => {
 
     expect(res.created).toBe(false);
     expect(res.messagingGroupId).toBe('mg-existing');
-    const mg = getMessagingGroupByPlatform('slack', 'C0SHARED');
+    const mg = getMessagingGroupByPlatform('slack', 'slack:C0SHARED');
     // 既存 mg の属性は一切変更しない（denied_at を立てない・is_group/policy 保持）。
     expect(mg?.is_group).toBe(0);
     expect(mg?.unknown_sender_policy).toBe('public');

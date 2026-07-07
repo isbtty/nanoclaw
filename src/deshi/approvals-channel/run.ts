@@ -43,11 +43,25 @@ function main(): void {
 
   console.log('--- 承認通知の共有チャンネル配線 完了 ---');
   console.log(`messaging_group_id : ${result.messagingGroupId} (${result.created ? '新規作成' : '既存を再利用'})`);
-  console.log(`platform_id        : ${platformId}`);
+  console.log(`入力 channel ID     : ${platformId}（保存時は slack: prefix 付きに正規化）`);
   console.log(`redirected (${result.redirected.length}) : ${result.redirected.join(', ') || '(なし)'}`);
   if (result.skipped.length > 0) {
     console.log(
       `skipped (${result.skipped.length})    : ${result.skipped.join(', ')}  ← slack identity でないため据え置き`,
+    );
+  }
+
+  // deshi#528 修正前に prefix 無しで作った壊れた mg が残っていれば警告する。
+  if (result.legacyMessagingGroupId) {
+    console.log('\n⚠️  同一チャンネルの prefix 無し(壊れ) messaging_group を検出しました:');
+    console.log(`    legacy mg id : ${result.legacyMessagingGroupId}`);
+    console.log('    配線は正しい正規 mg に寄せ直し済みですが、壊れた mg が DB に残っています。');
+    console.log('    router が誤発火した滞留カードがあれば手動で cleanup してください（例）:');
+    console.log(
+      `      pnpm exec tsx scripts/q.ts data/v2.db "DELETE FROM pending_channel_approvals WHERE messaging_group_id='${result.legacyMessagingGroupId}'"`,
+    );
+    console.log(
+      `      pnpm exec tsx scripts/q.ts data/v2.db "DELETE FROM messaging_groups WHERE id='${result.legacyMessagingGroupId}'"`,
     );
   }
 
