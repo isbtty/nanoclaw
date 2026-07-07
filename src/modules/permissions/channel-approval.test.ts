@@ -124,6 +124,25 @@ function groupMention(platformId: string, text = '@bot hello') {
   };
 }
 
+// A group message from a thread-less adapter (LINE-style): threadId is always
+// null, but the adapter flags message.isGroup=true. The wiring must still be
+// recognized as a group and default to 'mention' (not 'pattern'/respond-all).
+function nonThreadedGroupMention(platformId: string, text = '@bot hello') {
+  return {
+    channelType: 'line',
+    platformId,
+    threadId: null,
+    message: {
+      id: `msg-${Math.random().toString(36).slice(2, 8)}`,
+      kind: 'chat' as const,
+      content: JSON.stringify({ senderId: 'caller', senderName: 'Caller', text }),
+      timestamp: now(),
+      isMention: true,
+      isGroup: true,
+    },
+  };
+}
+
 function dmEvent(platformId: string, text = 'hello') {
   return {
     channelType: 'telegram',
@@ -277,6 +296,40 @@ describe('unknown-channel registration flow', () => {
       .get(pending.messaging_group_id) as { engage_mode: string; engage_pattern: string };
     expect(mga.engage_mode).toBe('pattern');
     expect(mga.engage_pattern).toBe('.');
+  });
+
+  it('approve on a thread-less group (LINE-style, isGroup=true, threadId=null) wires "mention", not "pattern"', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { getResponseHandlers } = await import('../../response-registry.js');
+
+    await routeInbound(nonThreadedGroupMention('line:group:G123'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const { getDb } = await import('../../db/connection.js');
+    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+      messaging_group_id: string;
+    };
+    expect(pending).toBeDefined();
+
+    for (const handler of getResponseHandlers()) {
+      const claimed = await handler({
+        questionId: pending.messaging_group_id,
+        value: 'connect:ag-1',
+        userId: 'owner',
+        channelType: 'telegram',
+        platformId: 'dm-owner',
+        threadId: null,
+      });
+      if (claimed) break;
+    }
+
+    const mga = getDb()
+      .prepare('SELECT engage_mode, engage_pattern FROM messaging_group_agents WHERE messaging_group_id = ?')
+      .get(pending.messaging_group_id) as { engage_mode: string; engage_pattern: string | null };
+    // Without this fix a null threadId misclassified the group as a DM and
+    // wired 'pattern' (.), making the bot respond to every group message.
+    expect(mga.engage_mode).toBe('mention');
+    expect(mga.engage_pattern).toBeNull();
   });
 
   it('deny → sets denied_at; future mentions drop silently without a second card', async () => {
