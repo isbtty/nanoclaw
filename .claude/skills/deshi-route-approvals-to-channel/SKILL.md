@@ -45,15 +45,26 @@ ID を渡すと承認カードがそこに混ざる）。
 ### 1. 共有チャンネルを用意して channel ID を取る
 
 owner に「owner/admin だけが入る Slack チャンネル」を作ってもらう（例: `#nanoclaw-承認`）。
-Slack channel ID (`Cxxxxxxxxxx`) は、Slack でチャンネル名クリック →
-最下部の「チャンネル ID」、または対象チャンネルのリンク末尾から取得。
 
-`AskUserQuestion` 等で channel ID と「owner/admin 専用チャンネルか」を確認する。
+**チャンネル ID の調べ方（この案内文をユーザーに表示する）:**
+
+> 📋 **チャンネル ID の確認方法**
+> 1. Slack で対象チャンネルを開き、上部の**チャンネル名をクリック**
+> 2. 開いたポップアップを一番下までスクロール
+> 3. 「**チャンネル ID**」の値をコピー（`C` から始まる英数字、例: `C01ABCDEF`）
+>
+> （別の取り方: そのチャンネルのリンクを「リンクをコピー」で取得すると、URL 末尾の
+> `/archives/C01ABCDEF` の `C...` 部分がチャンネル ID）
+
+`AskUserQuestion` 等で **チャンネル ID だけ**（`C...`）をチャットから受け取り、あわせて
+「**owner/admin 専用チャンネルか**」を必ず確認する。
 
 ### 2. 配線を実行（冪等）
 
+受け取ったチャンネル ID をそのまま渡す（プレフィックス等は不要）:
+
 ```bash
-pnpm exec tsx src/deshi/approvals-channel/run.ts <CHANNEL_ID> --name "承認"
+pnpm exec tsx src/deshi/approvals-channel/run.ts C01ABCDEF --name "承認"
 ```
 
 出力で以下を確認:
