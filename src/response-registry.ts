@@ -21,7 +21,30 @@ export interface ResponsePayload {
   threadId: string | null;
 }
 
-export type ResponseHandler = (payload: ResponsePayload) => Promise<boolean>;
+/**
+ * Outcome of dispatching a button-click response, returned up to the channel
+ * bridge so it can update the card AFTER authorization has run (deshi#531).
+ *
+ * - `card: 'apply'` — authorized (or non-gated card): show the selected label
+ *   and remove the buttons (the pre-#531 optimistic behavior).
+ * - `card: 'keep'`  — rejected: leave the card actionable so the real approver
+ *   can still click. `notify`, if set, is posted to the channel as a visible
+ *   message (intentionally not ephemeral — the whole channel should see who
+ *   tried and that it was refused).
+ */
+export interface ActionOutcome {
+  card: 'apply' | 'keep';
+  notify?: string;
+}
+
+/**
+ * A response handler returns:
+ * - `false` — not this handler's question (try the next handler).
+ * - `true` — claimed; the card applies (default success behavior).
+ * - `ActionOutcome` — claimed, with explicit control over the card update
+ *   (e.g. reject → `{ card: 'keep', notify }`).
+ */
+export type ResponseHandler = (payload: ResponsePayload) => Promise<boolean | ActionOutcome>;
 
 const responseHandlers: ResponseHandler[] = [];
 

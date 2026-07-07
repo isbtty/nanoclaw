@@ -334,6 +334,7 @@ describe('unknown-channel registration flow', () => {
       messaging_group_id: string;
     };
 
+    let outcome: boolean | { card: string; notify?: string } = false;
     for (const handler of getResponseHandlers()) {
       const claimed = await handler({
         questionId: pending.messaging_group_id,
@@ -343,8 +344,17 @@ describe('unknown-channel registration flow', () => {
         platformId: 'dm-random',
         threadId: null,
       });
-      if (claimed) break;
+      if (claimed) {
+        outcome = claimed;
+        break;
+      }
     }
+
+    // Rejected click keeps the card actionable (deshi#531) and returns a visible
+    // notice — the bridge leaves buttons intact so the real approver can act.
+    expect(typeof outcome).toBe('object');
+    expect(outcome).toMatchObject({ card: 'keep' });
+    expect((outcome as { notify?: string }).notify).toContain('承認権限がありません');
 
     // No wiring created, pending row preserved so a real approver can act on it.
     const mgaCount = (
