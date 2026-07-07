@@ -106,10 +106,20 @@ if [ "$DO_PULL" = 1 ] && [ -d "$REPO_ROOT/.git" ]; then
 fi
 ```
 
-### Step 3: pnpm build (host が対象のときのみ)
+### Step 3: pnpm build + upgrade marker stamp (host が対象のときのみ)
 
 `host` は `node dist/index.js` で動くため tsc → dist の反映が必須。`host-tools` は
 tsx が src を直実行するのでビルド不要。
+
+**build 成功後に upgrade marker を stamp する** (tripwire 解除)。host 起動時の
+`enforceUpgradeTripwire`([src/upgrade-state.ts](../../../src/upgrade-state.ts)) は
+「marker が現行 `package.json` version と一致」しないと `exit(1)` で起動を拒否する。
+marker は `data/upgrade-state.json`(install ごと・gitignore)なので **git pull では
+運べず**、通常は setup / update / migrate の3経路だけが自動 stamp する。deshi では
+**このスキルが正規デプロイ経路**なので、`git pull` + `pnpm build` が成功した時点を
+「サンクション経路完了」とみなして stamp する。これにより **version が上がる更新を
+生 pull で入れても、このスキル一発で tripwire まで面倒を見る**(手動 `upgrade-state.ts
+set` が不要になる)。
 
 ```bash
 NEEDS_BUILD=0
@@ -121,6 +131,16 @@ if [ "$DO_BUILD" = 1 ] && [ "$NEEDS_BUILD" = 1 ]; then
   pnpm install --silent 2>&1 | tail -3 | sed 's/^/  /' || { echo "  pnpm install failed" >&2; exit 3; }
   if pnpm build 2>&1 | tail -5 | sed 's/^/  /'; then
     [ -f dist/index.js ] && echo "  dist/index.js mtime: $(stat -f '%Sm' dist/index.js 2>/dev/null)"
+    # build 成功 = サンクション経路完了 → upgrade marker を現行 version に stamp。
+    # version 無指定は package.json 版を採用。stamp 失敗は致命ではない (host 起動時に
+    # tripwire が明示的に落として logs に理由を出すので、握り潰さず warn に留める)。
+    if [ -f scripts/upgrade-state.ts ]; then
+      if OUT=$(pnpm exec tsx scripts/upgrade-state.ts set "" deshi-restart-nanoclaw 2>&1); then
+        echo "  ✓ upgrade marker stamped: $(echo "$OUT" | tail -1)"
+      else
+        echo "  ⚠ upgrade marker stamp 失敗 (host が tripwire で止まる可能性): $(echo "$OUT" | tail -1)"
+      fi
+    fi
   else
     echo "  build failed; aborting" >&2; exit 4
   fi
