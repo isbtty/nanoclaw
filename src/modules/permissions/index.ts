@@ -482,7 +482,12 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
     return true;
   }
 
-  const isGroup = event.threadId !== null;
+  // Prefer the adapter-confirmed group flag; fall back to threadId for
+  // adapters that don't set it. Thread-less adapters (e.g. LINE,
+  // supportsThreads=false) always carry threadId=null, so threadId alone
+  // would misclassify their group chats as DMs and wire them 'pattern'
+  // (respond-to-everything) instead of 'mention'.
+  const isGroup = event.message.isGroup ?? event.threadId !== null;
   const engageMode: MessagingGroupAgent['engage_mode'] = isGroup ? 'mention' : 'pattern';
   const engagePattern = isGroup ? null : '.';
 
@@ -586,7 +591,8 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
     return true;
   }
 
-  const isGroup = originalEvent.threadId !== null;
+  // See note above: adapter-confirmed group flag first, threadId fallback.
+  const isGroup = originalEvent.message.isGroup ?? originalEvent.threadId !== null;
   const engageMode: MessagingGroupAgent['engage_mode'] = isGroup ? 'mention' : 'pattern';
   const engagePattern = isGroup ? null : '.';
 

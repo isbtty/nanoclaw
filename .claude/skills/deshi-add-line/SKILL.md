@@ -57,6 +57,7 @@ admin と user が同一人物の場合 (個人 install) は両 skill を同じ 
 4. handoff package を取り込み + cloudflared を user LaunchAgent で常駐化
 5. nanoclaw 再起動 + 疎通確認
 6. bot に DM 送信 → owner 承認カード経由で wiring 成立 → 双方向対話確認
+7. **応答モードの選択** — グループでの反応の仕方 (全応答 or メンションのみ+文脈蓄積) を選んで wiring に適用
 
 > §2-d で LINE Console に Webhook URL を入れる欄は確認するだけで、URL 文字列は §4 で handoff package から決まるので、その時点で戻ってきて入力する。
 
@@ -496,6 +497,78 @@ tail -200 logs/nanoclaw.log | grep -iE "\bline\b|channel registration"
 
 bot が agent の返事を LINE で受け取れば e2e 成立。2 回目以降の DM は承認カード無しで agent に届く。
 
+> wiring が成立したら **§7 で応答モードを選ぶ**。特にグループ運用する場合は §7 を必ず通す (auto-registration のデフォルトが LINE グループでは意図とズレるため、下記参照)。
+
+---
+
+## 7. 応答モードの選択 (グループの反応の仕方)
+
+wiring が成立すると、agent が「いつ反応するか」は wiring の `engage_mode` / `ignored_message_policy` で決まる。ここを初期設定で user に選ばせる。
+
+### DM は常に全応答 (設定不要)
+
+LINE adapter は DM を無条件で `isMention=true` にする (`src/deshi/channels/line.ts`)。router 側でも DM は必ず engage するため、**DM は engage_mode に関わらず毎回応答する**。DM の wiring は触らなくてよい。
+
+### グループの初期デフォルト = 「見守りモード」
+
+§6 の承認フローで wiring を自動生成するとき、`src/modules/permissions/index.ts` はグループの `engage_mode` を **`mention`**、`ignored_message_policy` を **`accumulate`** で作る。
+
+つまり **LINE グループは初期状態で「メンション時のみ応答 + 非メンションは文脈蓄積」= 下記 A モード**になっている。A で良ければ §7 は確認だけで済む。**全応答 (B) にしたい場合のみ上書きが必要**。
+
+> 前提: グループ判定は `event.message.isGroup`（アダプタが立てるフラグ）を優先し、無ければ `threadId !== null` にフォールバックする。LINE は `supportsThreads=false` で `threadId` が常に `null` だが、adapter が `isGroup=true` を立てるので正しくグループと判定される (この配線が無いと threadId=null により DM 扱い→`pattern` 全応答に誤配線されていた)。
+
+### user に聞く: グループでの反応モード
+
+```
+LINE グループでの bot の反応の仕方を選んでください:
+
+  A) 見守りモード (推奨・初期デフォルト)
+     - メンション (@アシスタント名 or LINE の mention) された時だけ返信
+     - 非メンションの発言も「文脈」として溜めておき、次に呼ばれた時に前後の
+       流れを踏まえて答える (返信はしない)
+     - engage_mode=mention / ignored_message_policy=accumulate
+     - ★ auto-registration の初期値がこれ。A なら追加操作は基本不要
+
+  B) 全応答モード
+     - グループの全メッセージに毎回反応する
+     - にぎやかなグループだと過剰・トークン消費大。専用の作業グループ向け
+     - engage_mode=pattern (.) / ignored_message_policy=accumulate
+```
+
+DM しか使わないなら「グループなし」と答えてもらい、本セクションは skip。
+
+### 対象グループ wiring の特定
+
+グループの wiring は、bot がそのグループにいて誰かが発言し §6 の承認を通した後に存在する。まだ無いなら、そのグループで一度発言 → 承認してから戻る。
+
+```bash
+pnpm exec tsx scripts/q.ts data/v2.db \
+  "SELECT mga.id AS wiring_id, mg.platform_id, mg.name, mga.engage_mode, mga.engage_pattern, mga.ignored_message_policy
+     FROM messaging_group_agents mga
+     JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
+    WHERE mg.channel_type='line' AND mg.is_group=1"
+```
+
+該当行の `wiring_id` を控える (複数グループあれば各行に対して適用する)。
+
+### モードを適用
+
+**A) 見守りモード** (メンションのみ応答 + 文脈蓄積) — 初期デフォルト。上の確認クエリで既に `mention` / `accumulate` なら何もしなくてよい。明示的に戻したい/古い wiring を直す場合のみ:
+
+```bash
+ncl wirings update <wiring-id> --engage_mode mention --ignored_message_policy accumulate
+```
+
+**B) 全応答モード**:
+
+```bash
+ncl wirings update <wiring-id> --engage_mode pattern --engage_pattern . --ignored_message_policy accumulate
+```
+
+適用後、再度上の q.ts クエリで `engage_mode` / `ignored_message_policy` が意図通りか確認する。反映は次のメッセージから効く (container 再起動は不要)。
+
+> メンション判定は adapter の `isBotMentionedInGroup` が担当する: LINE の正式な mention (`mention.mentionees` に bot userId or `type:'all'`) か、本文に アシスタント名 (`ASSISTANT_NAME`) が含まれれば mention 扱い。
+
 ---
 
 ## トラブルシュート
@@ -508,6 +581,8 @@ bot が agent の返事を LINE で受け取れば e2e 成立。2 回目以降�
 | 「Verify」で 502 / 530 (1033) | tunnel が edge と接続できていない。`cloudflared tunnel info <name>` で connector を確認、`/tmp/cloudflared.err.log` を確認 |
 | `LINE webhook server listening` ログが出ない | credential 未設定 = factory が `null` を返してスキップ。§3 の `.env` を再確認 |
 | bot に DM しても何も起きない | (1) Webhook OFF (§2-c) (2) Webhook URL の typo (§4.6) (3) nanoclaw が新コードを反映してない (§5-a の build + kickstart 忘れ) |
+| **グループで非メンションの発言にも全部反応してしまう** | wiring が `engage_mode=pattern` (`.`) になっている。B モードを選んだ or `isGroup` 判定修正前に作られた古い wiring (threadId=null で DM 誤判定)。§7-A (`engage_mode=mention`) で上書きする |
+| グループでメンションしても反応しない | (1) §2-c-2 のグループ参加が OFF で webhook が届いてない (2) mention 判定に失敗 — `@` に続けて `ASSISTANT_NAME` を正確に打つか、LINE の mention 機能で bot を選ぶ。`logs/nanoclaw.log` の `LINE group message` 行で `botMentionedInGroup` を確認 |
 | handoff package が見つからない | admin (運営チーム) が `/deshi-setup-subdomain` を未実行。依頼する |
 | cloudflared が起動しない | `~/.cloudflared/<UUID>.json` の権限 (600) を確認 / `~/.cloudflared/config.yml` の path が絶対パスか確認 (`~` ではなく `${HOME}` 展開済) |
 | 「`cloudflared` を `cloudflared service install` で system daemon 化した方が良い?」 | 非推奨。引数なし install は壊れた plist (`tunnel run` を渡さない) を作る既知 UX バグあり。本 skill は user LaunchAgent に倒している |
