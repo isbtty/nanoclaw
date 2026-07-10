@@ -8,8 +8,10 @@
 import { createSlackAdapter } from '@chat-adapter/slack';
 
 import { readEnvFile } from '../env.js';
+import { log } from '../log.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { resolveSlackPermalinks, type ThreadFetcher } from './slack-permalink.js';
 
 registerChannelAdapter('slack', {
   factory: () => {
@@ -25,7 +27,18 @@ registerChannelAdapter('slack', {
       appToken: env.SLACK_APP_TOKEN,
       mode: useSocketMode ? 'socket' : 'webhook',
     });
-    const bridge = createChatSdkBridge({ adapter: slackAdapter, concurrency: 'concurrent', supportsThreads: true });
+    const bridge = createChatSdkBridge({
+      adapter: slackAdapter,
+      concurrency: 'concurrent',
+      supportsThreads: true,
+      // Inline-resolve Slack permalinks so the linked thread's messages travel
+      // with the inbound text. deshi (the delegated investigator) has no Slack
+      // credentials, so a bare link would otherwise be unreadable downstream.
+      enrichInboundText: (_raw, currentText) =>
+        resolveSlackPermalinks(slackAdapter as unknown as ThreadFetcher, currentText, (threadId, err) =>
+          log.warn('slack permalink resolve failed', { threadId, err }),
+        ),
+    });
     bridge.resolveChannelName = async (platformId: string) => {
       try {
         const info = await slackAdapter.fetchThread(platformId);
