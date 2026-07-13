@@ -65,6 +65,46 @@ export function heartbeatPath(agentGroupId: string, sessionId: string): string {
   return path.join(sessionDir(agentGroupId, sessionId), '.heartbeat');
 }
 
+/** Marker written once the session's pre-history thread backfill has run. */
+function threadBackfillMarkerPath(agentGroupId: string, sessionId: string): string {
+  return path.join(sessionDir(agentGroupId, sessionId), '.thread-backfilled');
+}
+
+/** Whether thread backfill has already run for this session (fires at most once). */
+export function hasBackfilledThread(agentGroupId: string, sessionId: string): boolean {
+  return fs.existsSync(threadBackfillMarkerPath(agentGroupId, sessionId));
+}
+
+/** Mark this session as thread-backfilled so it never backfills again. */
+export function markThreadBackfilled(agentGroupId: string, sessionId: string): void {
+  try {
+    fs.writeFileSync(threadBackfillMarkerPath(agentGroupId, sessionId), '');
+  } catch (err) {
+    log.warn('Failed to write thread-backfilled marker', { agentGroupId, sessionId, err });
+  }
+}
+
+/**
+ * The platform ts (message id) of the earliest message already stored in a
+ * session's inbound DB, or null if it has none yet. Used as the boundary for
+ * thread backfill: fetch only what precedes the session's own earliest message
+ * so we never re-inject history the session already holds. Ids are stored as
+ * `<ts>:<agentGroupId>` (see messageIdForAgent); we return the bare `<ts>`.
+ */
+export function earliestInboundTs(agentGroupId: string, sessionId: string): string | null {
+  if (!fs.existsSync(inboundDbPath(agentGroupId, sessionId))) return null;
+  const db = openInboundDb(agentGroupId, sessionId);
+  try {
+    const row = db.prepare('SELECT id FROM messages_in ORDER BY seq ASC LIMIT 1').get() as
+      | { id?: string }
+      | undefined;
+    const ts = row?.id?.split(':')[0];
+    return ts && /^\d+\.\d+$/.test(ts) ? ts : null;
+  } finally {
+    db.close();
+  }
+}
+
 function generateId(): string {
   return `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }

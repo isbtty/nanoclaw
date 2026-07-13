@@ -30,7 +30,14 @@ import { findSessionForAgent } from './db/sessions.js';
 import { handleKnowledgeScopeCommand } from './modules/permissions/knowledge-scope-command.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
-import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
+import {
+  resolveSession,
+  writeSessionMessage,
+  writeOutboundDirect,
+  earliestInboundTs,
+  hasBackfilledThread,
+  markThreadBackfilled,
+} from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
 import { getSession } from './db/sessions.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
@@ -497,24 +504,28 @@ async function deliverToAgent(
     }
   }
 
-  // Thread backfill: when a mid-thread mention creates a fresh per-thread
-  // session, the container has no view of the posts that came before it. Fetch
-  // them once (host-side, via the adapter's platform credentials) and fold them
-  // into this first message so the agent can catch up. Only fires on session
-  // creation; the prior-only filter inside fetchThreadBackfill no-ops when the
-  // mention is itself the thread root.
+  // Thread backfill: give the container the earlier thread posts it never saw.
+  // Fires at most once per per-thread session, on the first *engaging* mention
+  // — not only at session creation — so sessions that predate this feature (or
+  // were created mid-thread before it shipped) still catch up on their next
+  // mention. The boundary is the session's earliest-seen message: we fetch only
+  // what precedes it, so history the session already holds is never re-injected.
+  // A brand-new session has no earlier message, so the boundary is this one.
   let content = event.message.content;
   if (
-    created &&
+    wake &&
     effectiveSessionMode === 'per-thread' &&
     event.threadId &&
-    (event.message.kind === 'chat' || event.message.kind === 'chat-sdk')
+    (event.message.kind === 'chat' || event.message.kind === 'chat-sdk') &&
+    !hasBackfilledThread(session.agent_group_id, session.id)
   ) {
     const adapter = getChannelAdapter(event.instance ?? event.channelType);
     if (adapter?.fetchThreadBackfill) {
       try {
-        const backfill = await adapter.fetchThreadBackfill(event.threadId, event.message.id);
+        const boundary = earliestInboundTs(session.agent_group_id, session.id) ?? event.message.id;
+        const backfill = await adapter.fetchThreadBackfill(event.threadId, boundary);
         if (backfill) content = appendTextToContent(content, backfill);
+        markThreadBackfilled(session.agent_group_id, session.id);
       } catch (err) {
         log.warn('Thread backfill injection failed', { threadId: event.threadId, err });
       }
