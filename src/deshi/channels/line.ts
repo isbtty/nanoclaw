@@ -19,6 +19,7 @@ import { log } from '../../log.js';
 import { isSafeAttachmentName } from '../../attachment-safety.js';
 import { registerChannelAdapter } from '../../channels/channel-registry.js';
 import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from '../../channels/adapter.js';
+import { formatLine } from './line-format.js';
 
 const LINE_API_BASE = 'https://api.line.me';
 const LINE_DATA_API_BASE = 'https://api-data.line.me';
@@ -494,8 +495,9 @@ registerChannelAdapter('line', {
         }
 
         const content = message.content as Record<string, unknown>;
-        const text = (content?.markdown as string) || (content?.text as string) || '';
-        if (!text) return undefined;
+        const rawText = (content?.markdown as string) || (content?.text as string) || '';
+        if (!rawText) return undefined;
+        const text = formatLine(rawText);
 
         const chunks = splitForLineLimit(text);
         let lastId: string | undefined;
