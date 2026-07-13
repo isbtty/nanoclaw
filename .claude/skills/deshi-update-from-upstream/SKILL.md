@@ -82,6 +82,7 @@ upstream の更新を `isbtty/nanoclaw` の `main` に取り込み、`.deshi/ups
 - **upstream の docs は upstream を真実とみなす**: `CLAUDE.md` / `docs/**` は `--theirs`。deshi 固有の docs は `.deshi/docs/**` に分離されている前提。
 - **channel adapter のソースは deshi 側を信じない**: `src/channels/<name>.ts` と `package.json` 内の `@chat-adapter/*` 行は `--ours` で残し、後続の `/deshi-update-nanoclaw-official-channels update` が channel branch から再適用して整合させる。
 - **`src/channels/index.ts` だけは union**: upstream の barrel と deshi 側 install 結果の両方の import 行を残す (.gitattributes の deshi-barrel merge driver 経由で機械解決)。
+- **`src/channels/slack.ts` に diff があれば `slack-instances.ts` へ反映確認 (ADR-0018)**: `src/deshi/channels/slack-instances.ts` の factory は `src/channels/slack.ts` の factory の**ミラー**。取込 range (Step 2 の preview) で `src/channels/slack.ts` が touch されていたら、その diff (permalink enrichment / resolveChannelName / fetchThreadBackfill / bridge の組み立て) を `slack-instances.ts` の factory に反映する必要があるか必ず確認する。`slack.ts` 自体は `--ours` で残る (上記 channel adapter ソースの原則) が、ミラー側の追随はこの Skill が機械解決できないため人間判断で行う。
 - **BREAKING は人間に必ず判断させる**: `--yes` モードでも ADR ファイルを `.deshi/adr/` に物理的に残し、commit に含めることでレビューを強制する。
 - **`main` には push しない / `main` で実行しない**: 本Skill は `main` から派生した作業ブランチで実行する前提 (Step 0-1)。merge は作業ブランチに対して行い、最終的に `main` への PR を出すところで止まる。
 - **連鎖呼出の失敗は fatal にしない**: `/deshi-update-nanoclaw-official-channels update` が失敗してもこのSkill 全体は continue。warn を出し、人間が単独で再実行できるよう案内する。
