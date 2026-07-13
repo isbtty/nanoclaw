@@ -95,9 +95,7 @@ export function earliestInboundTs(agentGroupId: string, sessionId: string): stri
   if (!fs.existsSync(inboundDbPath(agentGroupId, sessionId))) return null;
   const db = openInboundDb(agentGroupId, sessionId);
   try {
-    const row = db.prepare('SELECT id FROM messages_in ORDER BY seq ASC LIMIT 1').get() as
-      | { id?: string }
-      | undefined;
+    const row = db.prepare('SELECT id FROM messages_in ORDER BY seq ASC LIMIT 1').get() as { id?: string } | undefined;
     const ts = row?.id?.split(':')[0];
     return ts && /^\d+\.\d+$/.test(ts) ? ts : null;
   } finally {
