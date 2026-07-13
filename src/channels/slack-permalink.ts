@@ -172,5 +172,7 @@ export async function resolveThreadBackfill(
     return Number.isFinite(ts) && (!Number.isFinite(current) || ts < current);
   });
   const lines = formatThreadLines(prior);
-  return lines.length ? `── このスレッドの先行メッセージ ──\n${lines.join('\n')}` : null;
+  // Header flags this as system-fetched so the agent doesn't misattribute it as
+  // content the user pasted (it's the thread history we pulled in on join).
+  return lines.length ? `── このスレッドの先行メッセージ（自動取得） ──\n${lines.join('\n')}` : null;
 }

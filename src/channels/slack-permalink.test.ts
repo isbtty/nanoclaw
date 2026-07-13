@@ -135,7 +135,7 @@ describe('resolveThreadBackfill', () => {
 
     const out = await resolveThreadBackfill(adapter, 'slack:C1:1782511706.000000', CUR);
 
-    expect(out).toContain('── このスレッドの先行メッセージ ──');
+    expect(out).toContain('── このスレッドの先行メッセージ（自動取得） ──');
     expect(out).toContain('root: thread root');
     expect(out).toContain('carol: earlier reply');
     expect(out).not.toContain('my mention');
