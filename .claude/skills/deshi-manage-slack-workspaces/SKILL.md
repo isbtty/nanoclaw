@@ -1,11 +1,11 @@
 ---
-name: deshi-add-slack-workspace
+name: deshi-manage-slack-workspaces
 description: 追加の Slack ワークスペースを nanoclaw に接続する運用スキル (ADR-0018)。DESHI_SLACK_WORKSPACES への suffix 宣言 → Slack App 作成 → .env 配線 → 再起動 → ncl 配線までを誘導する。削除手順も含む。トリガー: "ワークスペース追加", "add slack workspace", "2つ目のSlack", "クライアントのSlackにも入れたい" (project)
 user-invocable: true
 allowed-tools: Bash, Read, Edit, AskUserQuestion
 ---
 
-# `/deshi-add-slack-workspace` — 追加 Slack ワークスペースの接続
+# `/deshi-manage-slack-workspaces` — 追加 Slack ワークスペースの管理
 
 ## 概要
 
