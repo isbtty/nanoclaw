@@ -20,6 +20,13 @@
  *
  * Env:
  *   DESHI_HOST_TOOLS_PORT      (default: 5180)
+ *   DESHI_HOST_TOOLS_BIND      (default: 127.0.0.1) — listen する bind address。
+ *                               macOS の Docker Desktop は host.docker.internal を
+ *                               loopback に流すため 127.0.0.1 で container から届くが、
+ *                               Linux docker は host-gateway(bridge IP)経由になるため
+ *                               127.0.0.1 bind だと container から到達できない。
+ *                               Linux デプロイでは 0.0.0.0 を設定する(Bearer 認証必須 +
+ *                               閉域前提)。
  *   DESHI_DAEMON_DEVICE_SECRET (inbound endpoint の Bearer secret。未設定なら
  *                               inbound は常に 401。MCP-backed handler 用には
  *                               別途 daemon_poll_until_done でも使われる)
@@ -39,6 +46,9 @@ import { inboundHandlers } from './inbound/index.js';
 import { InboundHandlerError } from './inbound/errors.js';
 
 const PORT = parseInt(process.env.DESHI_HOST_TOOLS_PORT ?? '5180', 10);
+// Default 127.0.0.1 keeps macOS/dev safe; Linux deploys set 0.0.0.0 so
+// containers can reach the bridge gateway (see Env doc above).
+const BIND_HOST = process.env.DESHI_HOST_TOOLS_BIND ?? '127.0.0.1';
 
 /**
  * central DB (`data/v2.db`) を本プロセス内で init する (ADR-0010 §7)。
@@ -225,8 +235,8 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 server.requestTimeout = 0;
 server.headersTimeout = 0;
 
-server.listen(PORT, '127.0.0.1', () => {
-  log(`listening on http://127.0.0.1:${PORT}`);
+server.listen(PORT, BIND_HOST, () => {
+  log(`listening on http://${BIND_HOST}:${PORT}`);
   log(`registered handlers (MCP-backed): ${Object.keys(handlers).join(', ')}`);
   log(`registered handlers (inbound): ${Object.keys(inboundHandlers).join(', ')}`);
   if ((process.env.DESHI_DAEMON_DEVICE_SECRET ?? '').length === 0) {
