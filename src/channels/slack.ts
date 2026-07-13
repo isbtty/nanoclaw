@@ -11,7 +11,7 @@ import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { createChatSdkBridge } from './chat-sdk-bridge.js';
 import { registerChannelAdapter } from './channel-registry.js';
-import { resolveSlackPermalinks, type ThreadFetcher } from './slack-permalink.js';
+import { resolveSlackPermalinks, resolveThreadBackfill, type ThreadFetcher } from './slack-permalink.js';
 
 registerChannelAdapter('slack', {
   factory: () => {
@@ -47,6 +47,14 @@ registerChannelAdapter('slack', {
         return null;
       }
     };
+    // Catch up on a thread the bot was just pulled into: when the router creates
+    // a fresh per-thread session mid-thread, backfill the earlier posts so the
+    // container (which never saw them) has the context. See fetchThreadBackfill
+    // on the ChannelAdapter interface.
+    bridge.fetchThreadBackfill = (threadId: string, currentMessageId: string) =>
+      resolveThreadBackfill(slackAdapter as unknown as ThreadFetcher, threadId, currentMessageId, (tid, err) =>
+        log.warn('slack thread backfill failed', { threadId: tid, err }),
+      );
     return bridge;
   },
 });

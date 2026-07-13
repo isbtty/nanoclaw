@@ -3,11 +3,19 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   permalinkToThreadId,
   resolveSlackPermalinks,
+  resolveThreadBackfill,
   type ThreadFetcher,
   type ThreadMessage,
 } from './slack-permalink.js';
 
 const msg = (userName: string, text: string): ThreadMessage => ({ text, author: { userName } });
+
+/** A thread message with an explicit ts/id, for time-ordering tests. */
+const tsMsg = (id: string, userName: string, text: string): ThreadMessage => ({
+  id,
+  text,
+  author: { userName },
+});
 
 /** A ThreadFetcher whose fetchMessages returns a fixed thread for any id. */
 function fetcherReturning(messages: ThreadMessage[]): ThreadFetcher {
@@ -112,5 +120,56 @@ describe('resolveSlackPermalinks', () => {
   it('skips a resolved thread that has no renderable messages', async () => {
     const adapter = fetcherReturning([{ text: '  ', author: { userName: 'alice' }, raw: {} }]);
     expect(await resolveSlackPermalinks(adapter, 'https://ws.slack.com/archives/C1/p1783033388675629')).toBeNull();
+  });
+});
+
+describe('resolveThreadBackfill', () => {
+  const CUR = '1783906128.000000';
+
+  it('returns only the messages before the current one', async () => {
+    const adapter = fetcherReturning([
+      tsMsg('1782511706.000000', 'root', 'thread root'),
+      tsMsg('1782511800.000000', 'carol', 'earlier reply'),
+      tsMsg(CUR, 'me', 'my mention'), // the triggering message — must be excluded
+    ]);
+
+    const out = await resolveThreadBackfill(adapter, 'slack:C1:1782511706.000000', CUR);
+
+    expect(out).toContain('── このスレッドの先行メッセージ ──');
+    expect(out).toContain('root: thread root');
+    expect(out).toContain('carol: earlier reply');
+    expect(out).not.toContain('my mention');
+  });
+
+  it('returns null when the mention is the thread root (nothing before it)', async () => {
+    const adapter = fetcherReturning([tsMsg(CUR, 'me', 'first post in a new thread')]);
+    expect(await resolveThreadBackfill(adapter, `slack:C1:${CUR}`, CUR)).toBeNull();
+  });
+
+  it('recovers Block Kit body for a prior message with empty text', async () => {
+    const adapter = fetcherReturning([
+      {
+        id: '1782511706.000000',
+        text: '',
+        author: { userName: 'issuer-worker' },
+        raw: { attachments: [{ blocks: [{ type: 'section', text: { type: 'mrkdwn', text: 'エラー本文' } }] }] },
+      },
+      tsMsg(CUR, 'me', 'これ何？'),
+    ]);
+
+    const out = await resolveThreadBackfill(adapter, 'slack:C1:1782511706.000000', CUR);
+    expect(out).toContain('issuer-worker: エラー本文');
+  });
+
+  it('reports the error and returns null when the fetch throws', async () => {
+    const boom = new Error('thread_not_found');
+    const adapter: ThreadFetcher = {
+      fetchMessages: vi.fn(async () => {
+        throw boom;
+      }),
+    };
+    const onError = vi.fn();
+    expect(await resolveThreadBackfill(adapter, 'slack:C1:1782511706.000000', CUR, onError)).toBeNull();
+    expect(onError).toHaveBeenCalledWith('slack:C1:1782511706.000000', boom);
   });
 });

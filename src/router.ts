@@ -157,6 +157,24 @@ function safeParseContent(raw: string): { text?: string; sender?: string; sender
 }
 
 /**
+ * Append `extra` to the `text` field of a serialized message `content` (the
+ * chat:Message JSON the container renders). Returns `content` unchanged if it
+ * isn't JSON with a string `text` — the caller keeps the original.
+ */
+function appendTextToContent(content: string, extra: string): string {
+  try {
+    const obj = JSON.parse(content);
+    if (obj && typeof obj.text === 'string') {
+      obj.text = `${obj.text}\n\n${extra}`;
+      return JSON.stringify(obj);
+    }
+  } catch {
+    // not JSON — leave as-is
+  }
+  return content;
+}
+
+/**
  * Route an inbound message from a channel adapter to the correct session.
  * Creates messaging group + session if they don't exist yet.
  */
@@ -479,6 +497,30 @@ async function deliverToAgent(
     }
   }
 
+  // Thread backfill: when a mid-thread mention creates a fresh per-thread
+  // session, the container has no view of the posts that came before it. Fetch
+  // them once (host-side, via the adapter's platform credentials) and fold them
+  // into this first message so the agent can catch up. Only fires on session
+  // creation; the prior-only filter inside fetchThreadBackfill no-ops when the
+  // mention is itself the thread root.
+  let content = event.message.content;
+  if (
+    created &&
+    effectiveSessionMode === 'per-thread' &&
+    event.threadId &&
+    (event.message.kind === 'chat' || event.message.kind === 'chat-sdk')
+  ) {
+    const adapter = getChannelAdapter(event.instance ?? event.channelType);
+    if (adapter?.fetchThreadBackfill) {
+      try {
+        const backfill = await adapter.fetchThreadBackfill(event.threadId, event.message.id);
+        if (backfill) content = appendTextToContent(content, backfill);
+      } catch (err) {
+        log.warn('Thread backfill injection failed', { threadId: event.threadId, err });
+      }
+    }
+  }
+
   writeSessionMessage(session.agent_group_id, session.id, {
     id: messageIdForAgent(event.message.id, agent.agent_group_id),
     kind: event.message.kind,
@@ -486,7 +528,7 @@ async function deliverToAgent(
     platformId: deliveryAddr.platformId,
     channelType: deliveryAddr.channelType,
     threadId: deliveryAddr.threadId,
-    content: event.message.content,
+    content,
     trigger: wake ? 1 : 0,
   });
 

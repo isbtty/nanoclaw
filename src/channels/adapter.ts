@@ -171,6 +171,19 @@ export interface ChannelAdapter {
   subscribe?(platformId: string, threadId: string): Promise<void>;
 
   /**
+   * Fetch the messages that precede `currentMessageId` in `threadId`, formatted
+   * as a text block for injection into the inbound message — or null if there
+   * are none. Called by the router exactly once, when a per-thread session is
+   * first created by a mid-thread mention, so the agent can catch up on the
+   * thread it was just pulled into (its container never saw the earlier posts).
+   *
+   * Only threaded platforms whose credentials live host-side implement this
+   * (Slack); the container itself has no platform token to fetch history. The
+   * router treats absence as "no backfill".
+   */
+  fetchThreadBackfill?(threadId: string, currentMessageId: string): Promise<string | null>;
+
+  /**
    * Open (or fetch) a DM with this user, returning the platform_id of the
    * resulting DM channel. Called by the host on demand to initiate cold
    * DMs — approvals, pairing handshakes, host-initiated notifications — to

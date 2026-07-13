@@ -14,6 +14,8 @@
 
 /** A resolved thread message, as returned by the adapter's `fetchMessages`. */
 export interface ThreadMessage {
+  /** Slack message ts (also the message id) — used to order/filter by time. */
+  id?: string;
   text?: string;
   author?: { userName?: string; fullName?: string };
   /** Raw Slack event — carries Block Kit content the adapter drops from `text`. */
@@ -77,6 +79,17 @@ function messageBody(msg: ThreadMessage): string {
   return plain || extractRawText(msg.raw).trim();
 }
 
+/** Render `messages` as `who: body` lines, dropping any with no renderable body. */
+function formatThreadLines(messages: ThreadMessage[]): string[] {
+  return messages
+    .map((msg) => {
+      const who = msg.author?.userName || msg.author?.fullName || 'unknown';
+      const body = messageBody(msg);
+      return body ? `${who}: ${body}` : '';
+    })
+    .filter(Boolean);
+}
+
 // `https://<workspace>.slack.com/archives/<CHANNEL>/p<digits>[?query]`
 // The `p<digits>` form concatenates a Slack ts (`<seconds>.<microseconds>`),
 // so the last 6 digits are the fractional part. A reply permalink carries the
@@ -117,13 +130,7 @@ export async function resolveSlackPermalinks(
         direction: 'forward',
         limit: THREAD_FETCH_LIMIT,
       });
-      const lines = (res?.messages ?? [])
-        .map((msg) => {
-          const who = msg.author?.userName || msg.author?.fullName || 'unknown';
-          const body = messageBody(msg);
-          return body ? `${who}: ${body}` : '';
-        })
-        .filter(Boolean);
+      const lines = formatThreadLines(res?.messages ?? []);
       if (lines.length) {
         blocks.push(`── リンク先スレッド (${channel}) ──\n${lines.join('\n')}`);
       }
@@ -132,4 +139,38 @@ export async function resolveSlackPermalinks(
     }
   }
   return blocks.length ? `${text}\n\n${blocks.join('\n\n')}` : null;
+}
+
+/**
+ * Fetch the messages that precede `currentMessageTs` in `threadId` and render
+ * them as a context block, or null if there are none. Used when the bot is
+ * first pulled into an existing thread (a mid-thread mention creates a fresh
+ * per-thread session whose container never saw the earlier posts).
+ *
+ * The prior-only filter makes the trigger self-selecting: a mention at the
+ * thread root — or a brand-new top-level message — has nothing before it and
+ * yields null, so only a genuine reply-into-history produces a backfill.
+ * Never throws: a failed fetch is reported and treated as "no backfill".
+ */
+export async function resolveThreadBackfill(
+  adapter: ThreadFetcher,
+  threadId: string,
+  currentMessageTs: string,
+  onError?: (threadId: string, err: unknown) => void,
+): Promise<string | null> {
+  let messages: ThreadMessage[];
+  try {
+    const res = await adapter.fetchMessages(threadId, { direction: 'forward', limit: THREAD_FETCH_LIMIT });
+    messages = res?.messages ?? [];
+  } catch (err) {
+    onError?.(threadId, err);
+    return null;
+  }
+  const current = Number.parseFloat(currentMessageTs);
+  const prior = messages.filter((m) => {
+    const ts = Number.parseFloat(m.id ?? '');
+    return Number.isFinite(ts) && (!Number.isFinite(current) || ts < current);
+  });
+  const lines = formatThreadLines(prior);
+  return lines.length ? `── このスレッドの先行メッセージ ──\n${lines.join('\n')}` : null;
 }
