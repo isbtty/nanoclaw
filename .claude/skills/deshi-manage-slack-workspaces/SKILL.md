@@ -50,6 +50,14 @@ Slack ワークスペース**を named instance として nanoclaw に接続す�
 > 4. **Event Subscriptions** → Subscribe to bot events もプライマリと同じに
 > 5. **Install to Workspace** → `xoxb-...` (Bot User OAuth Token) を控える
 
+⚠️ scope を口頭案内する場合、upstream `/add-slack` の SKILL.md にある scope リストには
+**`files:write` が無い**(あちらはファイル送信を想定していない)。あれを写すとテキストは
+届くのにファイル送信だけ `missing_scope` で失敗する(2026-07-13 HENKAKU 追加時に発生)。
+必ず `files:write` を含めた完全なリストを案内する: `chat:write`, `files:write`,
+`channels:history`, `groups:history`, `im:history`, `channels:read`, `groups:read`,
+`users:read`, `reactions:write`。配信は 60 秒間隔で自動リトライされるので、scope 追加 +
+reinstall だけで再送不要で届く。
+
 Socket Mode なら公開エンドポイント・Signing Secret 不要。webhook モードを使う場合のみ
 `SLACK_SIGNING_SECRET_<SUFFIX>` が必要で、Event Subscriptions の URL は
 `/webhook/slack-<suffix小文字>` に向ける。
