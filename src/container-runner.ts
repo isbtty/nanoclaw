@@ -23,6 +23,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { materializeContainerJson } from './container-config.js';
+import { envOverridesForMessagingGroup } from './container-env-overrides.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
@@ -156,6 +157,7 @@ async function spawnContainer(session: Session): Promise<void> {
     provider,
     contribution,
     agentIdentifier,
+    envOverridesForMessagingGroup(session.messaging_group_id),
   );
 
   log.info('Spawning container', { sessionId: session.id, agentGroup: agentGroup.name, containerName });
@@ -430,6 +432,7 @@ async function buildContainerArgs(
   _provider: string,
   providerContribution: ProviderContainerContribution,
   agentIdentifier?: string,
+  envOverrides?: Record<string, string>,
 ): Promise<string[]> {
   const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
 
@@ -515,6 +518,12 @@ async function buildContainerArgs(
     ]),
   ].join(',');
   args.push('-e', `NO_PROXY=${noProxy}`, '-e', `no_proxy=${noProxy}`);
+
+  // Operator env overrides (data/container-env.json, keyed by messaging group).
+  // Pushed last so they win over provider/gateway values of the same name.
+  for (const [key, value] of Object.entries(envOverrides ?? {})) {
+    args.push('-e', `${key}=${value}`);
+  }
 
   // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
   args.push('--entrypoint', 'bash');
