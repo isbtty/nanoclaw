@@ -80,7 +80,7 @@ function mcpAllowPattern(serverName: string): string {
 // (`??` で default を丸ごと上書きする旧実装は、env 設定時に deshi が黙って外れる
 // リスクがあった)。詳細は nanoclaw .deshi/adr/0015-deshi-mcp-always-load.md。
 const MCP_ALWAYS_LOAD_SERVERS = new Set<string>([
-  'deshi',
+  'boswell',
   ...(process.env.MCP_ALWAYS_LOAD_SERVERS?.split(',')
     .map((s) => s.trim())
     .filter(Boolean) ?? []),

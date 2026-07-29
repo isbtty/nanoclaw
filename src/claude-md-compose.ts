@@ -103,7 +103,7 @@ export async function composeGroupClaudeMd(group: AgentGroup): Promise<void> {
   // MCP server fragments — inline instructions from container.json for
   // user-added external MCP servers.
   for (const [name, mcp] of Object.entries(mcpServers)) {
-    if (name === 'deshi') continue; // handled below via auto-fetch
+    if (name === 'boswell') continue; // handled below via auto-fetch
     if (mcp.instructions) {
       desired.set(`mcp-${name}.md`, {
         type: 'inline',
@@ -112,26 +112,26 @@ export async function composeGroupClaudeMd(group: AgentGroup): Promise<void> {
     }
   }
 
-  // deshi MCP delegation fragment — fetched fresh from deshi daemon at
-  // compose time so editing `<deshi-repo>/.deshi/nanoclaw-delegation.md`
+  // boswell MCP delegation fragment — fetched fresh from boswell daemon at
+  // compose time so editing `<boswell-repo>/.boswell/nanoclaw-delegation.md`
   // takes effect on the next spawn (isbtty/deshi#319). On fetch failure
   // (daemon down, network) we fall back to the cached file written by a
   // previous spawn so the group keeps booting with stale but valid policy.
-  if (mcpServers.deshi) {
+  if (mcpServers.boswell) {
     let content: string | null = null;
     try {
       content = await fetchDeshiDelegationFragment();
     } catch (err) {
-      const cachedPath = path.join(fragmentsDir, 'mcp-deshi.md');
+      const cachedPath = path.join(fragmentsDir, 'mcp-boswell.md');
       if (fs.existsSync(cachedPath)) {
         content = fs.readFileSync(cachedPath, 'utf-8');
-        log.warn('fetchDeshiDelegationFragment failed; reusing cached mcp-deshi.md', { err, groupId: group.id });
+        log.warn('fetchDeshiDelegationFragment failed; reusing cached mcp-boswell.md', { err, groupId: group.id });
       } else {
-        log.warn('fetchDeshiDelegationFragment failed; no cached mcp-deshi.md available', { err, groupId: group.id });
+        log.warn('fetchDeshiDelegationFragment failed; no cached mcp-boswell.md available', { err, groupId: group.id });
       }
     }
     if (content !== null) {
-      desired.set('mcp-deshi.md', { type: 'inline', content });
+      desired.set('mcp-boswell.md', { type: 'inline', content });
     }
   }
 

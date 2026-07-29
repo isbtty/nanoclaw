@@ -86,7 +86,7 @@ async function callHostTool(toolName: string, args: unknown): Promise<{
 }
 
 const server = new McpServer({
-  name: 'deshi',
+  name: 'boswell',
   version: '0.2.0',
 });
 
@@ -236,12 +236,12 @@ function readMaxTriggerSeq(): number {
 //   channelContext は agent からは受け取らず、`session_routing` から自動注入。
 // ─────────────────────────────────────────────────────────────
 server.tool(
-  'deshi_run_start',
-  'deshi に処理を委譲する唯一の dispatch 窓口。ユーザー発話・質問・相談・依頼を、内容を問わず input にそのまま渡す（skill 名が明確なら "/deshi-<skill> <args>" も可）。deshi 側で skill 解決して非同期実行し jobId を返す。結果は deshi_run_poll で取得する。nanoclaw は自分で答えたり Google/検索を直接行ったりしない — すべてここに流す。',
+  'boswell_run_start',
+  'boswell に処理を委譲する唯一の dispatch 窓口。ユーザー発話・質問・相談・依頼を、内容を問わず input にそのまま渡す（skill 名が明確なら "/boswell-<skill> <args>" も可）。boswell 側で skill 解決して非同期実行し jobId を返す。結果は boswell_run_poll で取得する。nanoclaw は自分で答えたり Google/検索を直接行ったりしない — すべてここに流す。',
   {
     input: z
       .string()
-      .describe('ユーザー発話そのまま、または "/deshi-<skill> <args>"。非空。'),
+      .describe('ユーザー発話そのまま、または "/boswell-<skill> <args>"。非空。'),
   },
   async (args) => {
     let channelContext: ChannelContext;
@@ -282,7 +282,7 @@ server.tool(
               deduped: true,
               note:
                 '前回の run_start 以降に新しいユーザー発話がありません。新しい job は作成せず、進行中の既存 job を返しました。' +
-                'これを deshi_run_poll で待ってください。既に失敗していた場合は結果をユーザーに報告し、' +
+                'これを boswell_run_poll で待ってください。既に失敗していた場合は結果をユーザーに報告し、' +
                 'ユーザーが新しく明示的に依頼するまで run_start を投げ直さないでください。',
             }),
           },
@@ -310,10 +310,10 @@ server.tool(
 //   completed/failed の最終状態を受け取れる。retry ループは書かなくて良い。
 // ─────────────────────────────────────────────────────────────
 server.tool(
-  'deshi_run_poll',
-  'Wait for a job submitted via deshi_run_start to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion), jobEvicted (the daemon no longer has this job — it was dropped, e.g. its retention window expired; this is terminal, do NOT retry the same jobId — re-run from deshi_run_start if needed).',
+  'boswell_run_poll',
+  'Wait for a job submitted via boswell_run_start to reach a terminal state (completed/failed). host-tools-server retries GET /jobs internally; this MCP call returns once. Possible flags on the response: daemonRestarted (the daemon was restarted mid-job), timedOut (timeoutMs expired before completion), jobEvicted (the daemon no longer has this job — it was dropped, e.g. its retention window expired; this is terminal, do NOT retry the same jobId — re-run from boswell_run_start if needed).',
   {
-    jobId: z.string().describe('jobId returned by deshi_run_start'),
+    jobId: z.string().describe('jobId returned by boswell_run_start'),
     timeoutMs: z
       .number()
       .int()
