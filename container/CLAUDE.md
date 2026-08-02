@@ -22,22 +22,22 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 
 <!-- BEGIN deshi: host-tools MCP -->
 
-## deshi への委譲 (host-tools MCP 経由)
+## boswell への委譲 (host-tools MCP 経由)
 
-`deshi-add-host-tools` skill が配線されている場合、`mcp__deshi__*` 経由で deshi に委譲する。
-**nanoclaw は検閲・配送・中継のみ**。ユーザーの依頼・質問・相談・意見要求は、内容を問わず deshi に流す（ADR-0009 passthrough。詳細は `.claude-fragments/mcp-deshi.md`）。判断・業務・ナレッジ参照・Google 操作はすべて deshi 側で行う。nanoclaw に skill allowlist や業務 primitive は持たせない。
+`deshi-add-host-tools` skill が配線されている場合、`mcp__boswell__*` 経由で boswell に委譲する。
+**nanoclaw は検閲・配送・中継のみ**。ユーザーの依頼・質問・相談・意見要求は、内容を問わず boswell に流す（ADR-0009 passthrough。詳細は `.claude-fragments/mcp-boswell.md`）。判断・業務・ナレッジ参照・Google 操作はすべて boswell 側で行う。nanoclaw に skill allowlist や業務 primitive は持たせない。
 
-### dispatch (`deshi_run_start` → `deshi_run_poll`)
+### dispatch (`boswell_run_start` → `boswell_run_poll`)
 
 何らかのユーザー依頼があったら、以下で進める。途中で自前の retry ループを書かないこと。
 
-1. `mcp__deshi__deshi_run_start` を呼ぶ
+1. `mcp__boswell__boswell_run_start` を呼ぶ
    - 引数:
-     - `input`: **ユーザー発話をそのまま**渡す（skill 名が明確なら `"/deshi-<skill> <args>"` でもよい）。skill 解決は deshi 側が行う。
+     - `input`: **ユーザー発話をそのまま**渡す（skill 名が明確なら `"/boswell-<skill> <args>"` でもよい）。skill 解決は boswell 側が行う。
    - **channelContext は渡さない**: container が session_routing から自動注入する。channel/platformId/threadId を fabricate しないこと。
    - 戻り値: `{ ok: true, jobId, threadId }`
 2. ユーザーに **即時返答**: 「確認しています」程度の短い中間メッセージ（数十秒〜数分かかるため無音にしない）
-3. `mcp__deshi__deshi_run_poll` を **1 回だけ** 呼ぶ
+3. `mcp__boswell__boswell_run_poll` を **1 回だけ** 呼ぶ
    - 引数: `jobId`（上の戻り値）/ `timeoutMs`（通常省略、default 30 分）
    - 戻り値: `{ status, result?, error?, daemonRestarted?, timedOut?, ... }`
 
@@ -45,40 +45,40 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 
 - `status === "completed"` → `result` を整形して最終応答
 - `status === "failed"` →
-  - `daemonRestarted === true`: 「deshi daemon が再起動したため中断されました。再実行しますか?」と提案
-  - `jobEvicted === true`: job が deshi 側で消失（保持期限切れ等）。**その旨を報告して止まる**。同じ jobId を poll し直さない。
+  - `daemonRestarted === true`: 「boswell daemon が再起動したため中断されました。再実行しますか?」と提案
+  - `jobEvicted === true`: job が boswell 側で消失（保持期限切れ等）。**その旨を報告して止まる**。同じ jobId を poll し直さない。
   - そうでない: `error` をユーザーに伝える
 - `timedOut === true` → 「timeout しました (30 分超過)。後で結果を確認します」と応答
 
-**失敗・timeout の後に自分から `deshi_run_start` を投げ直さない（最重要）。**
+**失敗・timeout の後に自分から `boswell_run_start` を投げ直さない（最重要）。**
 poll が `failed` / `jobEvicted` / `timedOut` を返したら、**その結果をユーザーに報告して 1 ターンで止まる**。
 「もう一度やってみよう」「文脈を盛り直して再委譲しよう」は禁止 — 同じ依頼を新しい input で `run_start`
-し直すと、deshi 側に新 job が毎回生まれて多重発火になる（input が膨らみながら何本も走る）。
+し直すと、boswell 側に新 job が毎回生まれて多重発火になる（input が膨らみながら何本も走る）。
 **再実行はユーザーが新しく明示的に依頼したときだけ**行う。失敗は握り潰さず、素直に「失敗しました／
-deshi 側で確認が必要です」と伝えるのが正しい挙動。
+boswell 側で確認が必要です」と伝えるのが正しい挙動。
 
 ### respawn 後の復帰（`<system-note kind="respawn">` を見たとき）
 
 処理の途中でホストにコンテナを再起動されると、この system note が届く。**接続断でも失敗でもない** —
-委譲した deshi job はバックグラウンドで完了している可能性がある。謝る前に必ず状態を確認する:
+委譲した boswell job はバックグラウンドで完了している可能性がある。謝る前に必ず状態を確認する:
 
-- 委譲中だった job の **jobId が履歴にあれば、その jobId で `deshi_run_poll` を 1 回呼ぶ**。
-- jobId が分からない（履歴から失われた）場合は、**同じ input で `deshi_run_start` を呼ぶ**。多重発火ガードが
+- 委譲中だった job の **jobId が履歴にあれば、その jobId で `boswell_run_poll` を 1 回呼ぶ**。
+- jobId が分からない（履歴から失われた）場合は、**同じ input で `boswell_run_start` を呼ぶ**。多重発火ガードが
   respawn を越えて復元されているので、進行中の既存 job があればその jobId を返す（`deduped: true`）。
-  それを `deshi_run_poll` で待つ。**新しい job は作られない**。
+  それを `boswell_run_poll` で待つ。**新しい job は作られない**。
 - poll の結果（completed / failed / timedOut / jobEvicted）に従って通常どおり応答する。
 - **poll せずに「接続が切れた」「失敗した」と決めつけて謝らない。** これが #523 の誤動作。
 
 ### やってはいけないこと
 
-- **自分の知識で答える / 「知らない・情報が無い」と返す** → 必ず `deshi_run_start` に流す（検索・判断は deshi の責務）
-- **Google 操作・wiki/ファイル検索を nanoclaw で直接やろうとする** → そのツールは存在しない。すべて `deshi_run_start`
-- `deshi_run_start` を呼ばずに `deshi_run_poll`: jobId が無くエラー
-- `deshi_run_poll` を自前で retry ループ: host 側で long polling 済み
-- **失敗/timeout の後に同じ依頼を `deshi_run_start` で投げ直す**: 多重発火の原因。報告して止まる（上の最重要ルール参照）。新しいユーザー発話が無いのに 2 本目の job を作らない。
+- **自分の知識で答える / 「知らない・情報が無い」と返す** → 必ず `boswell_run_start` に流す（検索・判断は boswell の責務）
+- **Google 操作・wiki/ファイル検索を nanoclaw で直接やろうとする** → そのツールは存在しない。すべて `boswell_run_start`
+- `boswell_run_start` を呼ばずに `boswell_run_poll`: jobId が無くエラー
+- `boswell_run_poll` を自前で retry ループ: host 側で long polling 済み
+- **失敗/timeout の後に同じ依頼を `boswell_run_start` で投げ直す**: 多重発火の原因。報告して止まる（上の最重要ルール参照）。新しいユーザー発話が無いのに 2 本目の job を作らない。
 - `channelContext` を引数で渡す: schema に存在しない。自動注入される
 
-（添付ファイルの取り込み・配送は `daemon_push_file_to_raw` / `daemon_send_file_to_chat` を使う。詳細は `.claude-fragments/mcp-deshi.md`。）
+（添付ファイルの取り込み・配送は `daemon_push_file_to_raw` / `daemon_send_file_to_chat` を使う。詳細は `.claude-fragments/mcp-boswell.md`。）
 
 <!-- END deshi: host-tools MCP -->
 
