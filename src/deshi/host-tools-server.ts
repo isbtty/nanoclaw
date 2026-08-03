@@ -142,7 +142,10 @@ async function dispatch(name: string, body: unknown, res: ServerResponse): Promi
  * 事前に長さ比較で揃える。
  */
 function verifyInboundBearer(authHeader: string | undefined): boolean {
-  const expected = process.env.DESHI_DAEMON_DEVICE_SECRET ?? '';
+  // deshi → boswell リネーム移行中: boswell daemon は BOSWELL_DAEMON_DEVICE_SECRET
+  // を Bearer に載せる想定だが、移行未完環境では旧 DESHI_DAEMON_DEVICE_SECRET
+  // だけが export されている。両方を受け付けて配信を落とさない (boswell #664)。
+  const expected = process.env.BOSWELL_DAEMON_DEVICE_SECRET ?? process.env.DESHI_DAEMON_DEVICE_SECRET ?? '';
   if (expected.length === 0) return false;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
   const provided = authHeader.slice('Bearer '.length);
@@ -204,15 +207,19 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return;
   }
 
-  // POST /inbound/deshi/<name> — 外部システム (deshi daemon 等) からの push
+  // POST /inbound/{boswell,deshi}/<name> — 外部システム (boswell daemon 等) からの push
   // ADR-0010 に基づく direct HTTP receiver 系統。Bearer 認証必須。
-  if (req.method === 'POST' && url.pathname.startsWith('/inbound/deshi/')) {
+  // deshi → boswell リネーム (boswell #664) 移行中は両 prefix を受け付ける。
+  // boswell daemon は現在 /inbound/boswell/ に push するが、旧 fork / 未移行
+  // 環境は /inbound/deshi/ を叩くため互換を維持する。
+  const inboundPrefix = ['/inbound/boswell/', '/inbound/deshi/'].find((p) => url.pathname.startsWith(p));
+  if (req.method === 'POST' && inboundPrefix) {
     if (!verifyInboundBearer(req.headers.authorization)) {
       log(`POST ${url.pathname} 401 unauthorized`);
       jsonResponse(res, 401, { ok: false, error: 'unauthorized' });
       return;
     }
-    const name = url.pathname.slice('/inbound/deshi/'.length);
+    const name = url.pathname.slice(inboundPrefix.length);
     let body: unknown;
     try {
       body = await readJsonBody(req);
@@ -220,7 +227,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       jsonResponse(res, 400, { ok: false, error: 'invalid JSON body' });
       return;
     }
-    log(`POST /inbound/deshi/${name}`);
+    log(`POST ${inboundPrefix}${name}`);
     await dispatchInbound(name, body, res);
     return;
   }
@@ -239,7 +246,9 @@ server.listen(PORT, BIND_HOST, () => {
   log(`listening on http://${BIND_HOST}:${PORT}`);
   log(`registered handlers (MCP-backed): ${Object.keys(handlers).join(', ')}`);
   log(`registered handlers (inbound): ${Object.keys(inboundHandlers).join(', ')}`);
-  if ((process.env.DESHI_DAEMON_DEVICE_SECRET ?? '').length === 0) {
-    log('WARNING: DESHI_DAEMON_DEVICE_SECRET is not set — /inbound/deshi/* will always return 401');
+  if ((process.env.BOSWELL_DAEMON_DEVICE_SECRET ?? process.env.DESHI_DAEMON_DEVICE_SECRET ?? '').length === 0) {
+    log(
+      'WARNING: BOSWELL_DAEMON_DEVICE_SECRET (nor DESHI_DAEMON_DEVICE_SECRET) is not set — /inbound/{boswell,deshi}/* will always return 401',
+    );
   }
 });
