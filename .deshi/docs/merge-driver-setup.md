@@ -11,7 +11,7 @@ custom merge driver `deshi-barrel` を登録する必要があります。
 
 git のセキュリティモデル上、merge driver の本体 (`.deshi/scripts/merge-barrel.sh`)
 を `.gitattributes` から自動でローカル設定に登録することはできません。各開発者が
-明示的に登録するか、`/deshi-update-from-upstream` skill が初回実行時に自動登録する
+明示的に登録するか、`/boswell-update-from-upstream` skill が初回実行時に自動登録する
 かのいずれかが必要です。
 
 ## 手動セットアップ
@@ -35,7 +35,7 @@ git config --get merge.deshi-barrel.driver
 
 ## 自動セットアップ
 
-`/deshi-update-from-upstream` skill は Step 0-2 で未登録なら自動的に上記コマンドを
+`/boswell-update-from-upstream` skill は Step 0-2 で未登録なら自動的に上記コマンドを
 実行します。skill 起動時にセットアップを忘れていても自動で復旧するため、`skill を
 1 回でも走らせれば登録は完了する` 設計です。
 

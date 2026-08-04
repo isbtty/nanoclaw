@@ -4,6 +4,6 @@
 #   git config merge.deshi-barrel.name "deshi barrel union merge driver"
 #   git config merge.deshi-barrel.driver ".deshi/scripts/merge-barrel.sh %O %A %B %P"
 #
-# /deshi-update-from-upstream skill が初回実行時に自動登録する (Step 0-2)。
+# /boswell-update-from-upstream skill が初回実行時に自動登録する (Step 0-2)。
 src/channels/index.ts   merge=deshi-barrel
 src/providers/index.ts  merge=deshi-barrel

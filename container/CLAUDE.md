@@ -24,7 +24,7 @@ The `conversations/` folder in your workspace holds searchable transcripts of pa
 
 ## boswell への委譲 (host-tools MCP 経由)
 
-`deshi-add-host-tools` skill が配線されている場合、`mcp__boswell__*` 経由で boswell に委譲する。
+`boswell-add-host-tools` skill が配線されている場合、`mcp__boswell__*` 経由で boswell に委譲する。
 **nanoclaw は検閲・配送・中継のみ**。ユーザーの依頼・質問・相談・意見要求は、内容を問わず boswell に流す（ADR-0009 passthrough。詳細は `.claude-fragments/mcp-boswell.md`）。判断・業務・ナレッジ参照・Google 操作はすべて boswell 側で行う。nanoclaw に skill allowlist や業務 primitive は持たせない。
 
 ### dispatch (`boswell_run_start` → `boswell_run_poll`)

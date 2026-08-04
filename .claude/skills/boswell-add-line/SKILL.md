@@ -1,6 +1,6 @@
 ---
-name: deshi-add-line
-description: LINE Messaging API channel を nanoclaw に有効化する deshi 固有 skill。`src/deshi/channels/line.ts` の native adapter を前提に、`/deshi-setup-subdomain` (isbtty/deshi、admin-side) が発行した handoff package (subdomain / tunnel UUID / credentials JSON) を user 端末に配線し、credential 設定 / cloudflared を user LaunchAgent として常駐化 / LINE Developers Console 設定 / 疎通確認まで誘導する。
+name: boswell-add-line
+description: LINE Messaging API channel を nanoclaw に有効化する deshi 固有 skill。`src/deshi/channels/line.ts` の native adapter を前提に、`/boswell-setup-subdomain` (isbtty/deshi、admin-side) が発行した handoff package (subdomain / tunnel UUID / credentials JSON) を user 端末に配線し、credential 設定 / cloudflared を user LaunchAgent として常駐化 / LINE Developers Console 設定 / 疎通確認まで誘導する。
 ---
 
 # LINE channel を nanoclaw に追加 (deshi 固有)
@@ -21,7 +21,7 @@ upstream `nanocoai/nanoclaw` に LINE adapter は存在しない。deshi fork (`
 ```
   [admin 端末]                              [user 端末 = nanoclaw が動く Mac]
        │                                          │
-       │  /deshi-setup-subdomain  (isbtty/deshi)  │
+       │  /boswell-setup-subdomain  (isbtty/deshi)  │
        │  ├─ Terraform で CF Access apps を生成   │
        │  │   • <user>-deshi   (deny-all)         │
        │  │   • <user>-webhook (bypass-all)       │
@@ -33,7 +33,7 @@ upstream `nanocoai/nanoclaw` に LINE adapter は存在しない。deshi fork (`
        │           handoff package を手渡し         │
        │ ──────────────────────────────────────►  │
        │                                          │
-       │                                          │  /deshi-add-line  (isbtty/nanoclaw、本 skill)
+       │                                          │  /boswell-add-line  (isbtty/nanoclaw、本 skill)
        │                                          │  ├─ コード presence check
        │                                          │  ├─ LINE Console で channel 準備
        │                                          │  ├─ .env に credential
@@ -240,9 +240,9 @@ LINE_WEBHOOK_PATH=/webhook
 
 ## 4. Handoff package を取り込み + cloudflared を user LaunchAgent で常駐化
 
-本 skill は **subdomain / tunnel / CF Access apps の発行は別 skill (`/deshi-setup-subdomain`、admin-side、isbtty/deshi repo) に委譲する**。本セクションは発行済みの handoff package を user 端末に配線する役。
+本 skill は **subdomain / tunnel / CF Access apps の発行は別 skill (`/boswell-setup-subdomain`、admin-side、isbtty/deshi repo) に委譲する**。本セクションは発行済みの handoff package を user 端末に配線する役。
 
-> 注意: deshi side の legacy `/deshi-connect-line` (旧 daemon plugin 方式) と本 skill (nanoclaw adapter 方式) は同じ LINE bot に対して並走させない。Webhook URL を奪い合うため必ずどちらか片方の運用に統一する。
+> 注意: deshi side の legacy `/boswell-connect-line` (旧 daemon plugin 方式) と本 skill (nanoclaw adapter 方式) は同じ LINE bot に対して並走させない。Webhook URL を奪い合うため必ずどちらか片方の運用に統一する。
 
 ### 4.0 既存設定の検出 (idempotent)
 
@@ -266,7 +266,7 @@ test -f ~/.cloudflared/config.yml \
 
 ### 4.1 ユーザに聞く: deshi URL は用意済みか
 
-> ⚠️ 一般ユーザは `/deshi-setup-subdomain` や `handoff package` という用語を知らない。skill 内では **user-facing な言い回し** に倒すこと。
+> ⚠️ 一般ユーザは `/boswell-setup-subdomain` や `handoff package` という用語を知らない。skill 内では **user-facing な言い回し** に倒すこと。
 
 ```
 あなた用の deshi URL (例: dou.deshi.jp) は用意済みですか?
@@ -280,7 +280,7 @@ test -f ~/.cloudflared/config.yml \
 
 ### 4.2 Handoff package の入手と検証
 
-admin (= `deshi.jp` の Cloudflare Zone 権限 + Terraform 環境を持つ運用者) が **`/deshi-setup-subdomain`** (isbtty/deshi repo) を実行することで以下が生成されている前提:
+admin (= `deshi.jp` の Cloudflare Zone 権限 + Terraform 環境を持つ運用者) が **`/boswell-setup-subdomain`** (isbtty/deshi repo) を実行することで以下が生成されている前提:
 
 | 成果物 | 形式 / 配置 |
 |---|---|
@@ -290,7 +290,7 @@ admin (= `deshi.jp` の Cloudflare Zone 権限 + Terraform 環境を持つ運用
 | DNS route | `<user>.deshi.jp` → tunnel UUID への CNAME (Cloudflare proxied) |
 | handoff package | iCloud secrets の `handoff.json` + `<UUID>.json` |
 
-admin と user が同一人物 (個人 install) の場合は、admin 側で `/deshi-setup-subdomain` を済ませてから本 skill を続行。別人の場合は handoff package を 1Password / age 暗号 / 対面など安全な経路で受け取る。
+admin と user が同一人物 (個人 install) の場合は、admin 側で `/boswell-setup-subdomain` を済ませてから本 skill を続行。別人の場合は handoff package を 1Password / age 暗号 / 対面など安全な経路で受け取る。
 
 handoff package を確認:
 
@@ -576,14 +576,14 @@ ncl wirings update <wiring-id> --engage_mode pattern --engage_pattern . --ignore
 | 現象 | 原因 / 対処 |
 |---|---|
 | 自動返信「メッセージありがとうございます！…」が返る | §2-c の応答メッセージが ON。Official Account Manager 側で OFF |
-| 「Verify」で 302 (cloudflareaccess.com に飛ばされる) | CF Access の `<user>-webhook` (path: `/webhook`, bypass-all) アプリが無い or 順序壊れ。admin に `/deshi-setup-subdomain` 再実行を依頼 |
+| 「Verify」で 302 (cloudflareaccess.com に飛ばされる) | CF Access の `<user>-webhook` (path: `/webhook`, bypass-all) アプリが無い or 順序壊れ。admin に `/boswell-setup-subdomain` 再実行を依頼 |
 | 「Verify」で 401 | nanoclaw まで届いているが signature 検証で落ちている。`LINE_CHANNEL_SECRET` が間違いか、§5-a の再起動忘れで古い secret で起動 |
 | 「Verify」で 502 / 530 (1033) | tunnel が edge と接続できていない。`cloudflared tunnel info <name>` で connector を確認、`/tmp/cloudflared.err.log` を確認 |
 | `LINE webhook server listening` ログが出ない | credential 未設定 = factory が `null` を返してスキップ。§3 の `.env` を再確認 |
 | bot に DM しても何も起きない | (1) Webhook OFF (§2-c) (2) Webhook URL の typo (§4.6) (3) nanoclaw が新コードを反映してない (§5-a の build + kickstart 忘れ) |
 | **グループで非メンションの発言にも全部反応してしまう** | wiring が `engage_mode=pattern` (`.`) になっている。B モードを選んだ or `isGroup` 判定修正前に作られた古い wiring (threadId=null で DM 誤判定)。§7-A (`engage_mode=mention`) で上書きする |
 | グループでメンションしても反応しない | (1) §2-c-2 のグループ参加が OFF で webhook が届いてない (2) mention 判定に失敗 — `@` に続けて `ASSISTANT_NAME` を正確に打つか、LINE の mention 機能で bot を選ぶ。`logs/nanoclaw.log` の `LINE group message` 行で `botMentionedInGroup` を確認 |
-| handoff package が見つからない | admin (運営チーム) が `/deshi-setup-subdomain` を未実行。依頼する |
+| handoff package が見つからない | admin (運営チーム) が `/boswell-setup-subdomain` を未実行。依頼する |
 | cloudflared が起動しない | `~/.cloudflared/<UUID>.json` の権限 (600) を確認 / `~/.cloudflared/config.yml` の path が絶対パスか確認 (`~` ではなく `${HOME}` 展開済) |
 | 「`cloudflared` を `cloudflared service install` で system daemon 化した方が良い?」 | 非推奨。引数なし install は壊れた plist (`tunnel run` を渡さない) を作る既知 UX バグあり。本 skill は user LaunchAgent に倒している |
 | **MacBook の蓋を閉じてスリープすると LINE 通知が来ない** | LaunchAgent / Daemon どちらでも Mac がスリープすれば cloudflared も止まる。常時受信したい場合は §下記 sleep 抑止オプションを参照 |
@@ -615,12 +615,12 @@ sudo pmset -a disablesleep 0
 ## scope 外
 
 - 本 skill は **LINE adapter の有効化のみ**。deshi 側 `LineNotifier` の廃止 (isbtty/deshi#259 Step 4) は別 skill で扱う。
-- subdomain / tunnel / CF Access apps の発行は **`/deshi-setup-subdomain`** (isbtty/deshi、admin-side) に委譲する。本 skill 内ではそれらを作らない。
+- subdomain / tunnel / CF Access apps の発行は **`/boswell-setup-subdomain`** (isbtty/deshi、admin-side) に委譲する。本 skill 内ではそれらを作らない。
 - outbound 添付 (画像送信) は未対応 (テキストのみ)。
 - `ask_question` の LINE Quick Reply 化は未実装 (テキストフォールバック)。
 
 ## 関連
 
-- `/deshi-setup-subdomain` (isbtty/deshi) — admin-side で subdomain / tunnel / CF Access apps を発行
-- `/deshi-connect-line` (isbtty/deshi、legacy) — 旧 daemon plugin 方式での LINE 接続 skill。本 skill (nanoclaw adapter 方式) と用途が競合するため並走させない
+- `/boswell-setup-subdomain` (isbtty/deshi) — admin-side で subdomain / tunnel / CF Access apps を発行
+- `/boswell-connect-line` (isbtty/deshi、legacy) — 旧 daemon plugin 方式での LINE 接続 skill。本 skill (nanoclaw adapter 方式) と用途が競合するため並走させない
 - isbtty/deshi#259 — LINE channel adapter を nanoclaw 側で持つ件 + LineNotifier 廃止

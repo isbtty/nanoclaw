@@ -1,11 +1,11 @@
 ---
-name: deshi-update-knowledge-scope
+name: boswell-update-knowledge-scope
 description: チャンネルの知識スコープを再設定するための編集リンクをオーナーの DM に発行するチャット起点コマンド (`/update-knowledge-scope`)。owner/admin 限定、時間制限付きリンク (project)
 user-invocable: false
 allowed-tools: Read
 ---
 
-# `deshi-update-knowledge-scope` — 知識スコープ再設定リンクの再発行
+# `boswell-update-knowledge-scope` — 知識スコープ再設定リンクの再発行
 
 ## 概要
 
@@ -15,7 +15,7 @@ allowed-tools: Read
 リンク（`channel-scope-link.ts`）と同じ仕組みを、オーンデマンドで再発行する。
 
 > **operator スキルではない**（`user-invocable: false`）。Claude Code から
-> `/deshi-update-knowledge-scope` で実行するものではなく、**エンドユーザー（owner）が
+> `/boswell-update-knowledge-scope` で実行するものではなく、**エンドユーザー（owner）が
 > チャットで送るコマンド**。本ファイルは機能のドキュメント兼カタログ登録用。
 
 ## 振る舞い

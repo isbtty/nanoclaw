@@ -1,13 +1,13 @@
 /**
  * `/update-knowledge-scope` — on-demand re-issue of a channel's knowledge-scope
- * edit link (deshi-update-knowledge-scope skill).
+ * edit link (boswell-update-knowledge-scope skill).
  *
  * Chat-triggered command. Triggered by the explicit command only — the
  * `/update-knowledge-scope` slash command or the skill name typed directly
- * (`deshi-update-knowledge-scope`, with/without `/`). Natural-language
- * requests ("公開範囲を編集したい" etc.) are NOT matched here; the deshi
- * delegation fragment guides those to send this command, keeping nanoclaw
- * free of keyword matching. When an owner/admin triggers it, we mint a fresh
+ * (`boswell-update-knowledge-scope`, with/without `/`; legacy `deshi-` form
+ * also accepted). Natural-language requests ("公開範囲を編集したい" etc.) are
+ * NOT matched here; the boswell delegation fragment guides those to send this
+ * command, keeping nanoclaw free of keyword matching. When an owner/admin triggers it, we mint a fresh
  * time-limited scope-edit link (same as the connect-time onboarding link) and
  * DM it to them, then acknowledge in the channel.
  *
@@ -18,7 +18,7 @@
  * must stay in the owner's DM.
  *
  * Lives on the router's command path (`deliverToAgent`, before the generic
- * `gateCommand`): a handled command never reaches the container / deshi
+ * `gateCommand`): a handled command never reaches the container / boswell
  * passthrough. Authorization reuses `hasAdminPrivilege` — the same gate that
  * guards setting scope from the registration card — so "owner" here means the
  * same owner/admin set.
@@ -33,12 +33,16 @@ import { hasAdminPrivilege } from './db/user-roles.js';
 export const KNOWLEDGE_SCOPE_COMMAND = '/update-knowledge-scope';
 
 // Recognized as the leading token: the slash command and the skill name
-// (with/without the `/` and the `deshi-` prefix). Exact match only — natural
-// language ("公開範囲を編集したい" etc.) is NOT matched here. Fuzzy intent is
-// the deshi agent's job: the delegation fragment guides such requests to send
-// this command, so nanoclaw stays free of brittle keyword matching.
+// (with/without the `/` and the `boswell-` prefix; legacy `deshi-` accepted).
+// Exact match only — natural language ("公開範囲を編集したい" etc.) is NOT
+// matched here. Fuzzy intent is the boswell agent's job: the delegation
+// fragment guides such requests to send this command, so nanoclaw stays free
+// of brittle keyword matching.
 const COMMAND_ALIASES = new Set([
   KNOWLEDGE_SCOPE_COMMAND,
+  '/boswell-update-knowledge-scope',
+  'boswell-update-knowledge-scope',
+  // Legacy deshi-prefixed forms kept for back-compat (pre-boswell rename).
   '/deshi-update-knowledge-scope',
   'deshi-update-knowledge-scope',
   'update-knowledge-scope',

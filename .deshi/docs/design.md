@@ -8,7 +8,7 @@
 
 | 種別 | パターン | 例 |
 |------|---------|-----|
-| 動詞系 | `^deshi-(add\|init\|update\|migrate\|setup\|run\|manage\|convert)-[a-z0-9-]+$` | `deshi-add-line`, `deshi-update-from-upstream` |
+| 動詞系 | `^deshi-(add\|init\|update\|migrate\|setup\|run\|manage\|convert)-[a-z0-9-]+$` | `boswell-add-line`, `boswell-update-from-upstream` |
 | Utility (非動詞) | `^deshi-[a-z0-9-]+$` | `deshi-feedback-gh` |
 
 **動詞 prefix の使い分け** (8種に限定):
@@ -109,7 +109,7 @@ merge driver は union merge (両側の import 行を全て残し、重複排除
 ```
 
 **フィールドの意味**:
-- `upstream.main` — upstream `main` branch の追従状態 (`/deshi-update-from-upstream` が更新)
+- `upstream.main` — upstream `main` branch の追従状態 (`/boswell-update-from-upstream` が更新)
 - `upstream.main.policy` — `merge-base` (ADR-0008 既定) または `target` (`--target` 明示指定時)
 - `upstream.channels.sha` — upstream `channels` branch HEAD の SHA (複数 channel まとめて単一 SHA で pin)
 - `upstream.channels.installed` — **deshi が明示的に取り込んでいる channel のリスト**。このリストにあるものだけが `install-official-channels.sh` で取り込まれる
@@ -126,11 +126,11 @@ merge driver は union merge (両側の import 行を全て残し、重複排除
   "deshiRelease": "v0.1.0-initial",
   "skills": [
     {
-      "name": "deshi-update-from-upstream",
+      "name": "boswell-update-from-upstream",
       "kind": "operational",
       "version": "0.1.0",
       "owner": "@isbtty/deshi-core",
-      "sources": [".claude/skills/deshi-update-from-upstream/"],
+      "sources": [".claude/skills/boswell-update-from-upstream/"],
       "introducedIn": "v0.1.0-initial"
     }
   ]
@@ -141,7 +141,7 @@ merge driver は union merge (両側の import 行を全て残し、重複排除
 
 ## 6. upstream 追従フロー
 
-詳細は `.claude/skills/deshi-update-from-upstream/SKILL.md`。
+詳細は `.claude/skills/boswell-update-from-upstream/SKILL.md`。
 
 ```mermaid
 flowchart TD
@@ -164,7 +164,7 @@ flowchart TD
 
 ## 7. 衝突解決ポリシー (upstream → deshi)
 
-詳細は `.claude/skills/deshi-update-from-upstream/SKILL.md`。
+詳細は `.claude/skills/boswell-update-from-upstream/SKILL.md`。
 
 | path | 方針 |
 |------|------|
@@ -185,7 +185,7 @@ flowchart TD
 
 ## 9. ロールバック手順
 
-### `/deshi-update-from-upstream` のロールバック
+### `/boswell-update-from-upstream` のロールバック
 
 backup branch + backup tag が必ず作成されるため:
 
@@ -219,7 +219,7 @@ container 内 agent に公開する MCP tool の命名規則:
 - (2026-04-27) JSON フィールドの命名整理。プロジェクト全体で TypeScript / JSON は camelCase 統一。
 - (2026-04-27) `upstream-versions.json` の `channels` を「branch HEAD の単一 SHA + `installed` 配列」で管理する形に簡素化 (upstream/channels は単一ブランチで全 channel が同 commit に乗っているため)。
 - (2026-04-28) 基準コミットを共通祖先運用に移行。`upstream/channels` が `upstream/main` の祖先関係を満たさず、ancestor チェックを通すために共通祖先まで戻す必要があった。詳細は isbtty/deshi#126。
-- (2026-05-01) 共通祖先運用を Skill レベルで実装。`/deshi-update-from-upstream` の default 取り込み対象を `git merge-base upstream/main upstream/channels` に変更。詳細は ADR-0008 と isbtty/deshi#128。
+- (2026-05-01) 共通祖先運用を Skill レベルで実装。`/boswell-update-from-upstream` の default 取り込み対象を `git merge-base upstream/main upstream/channels` に変更。詳細は ADR-0008 と isbtty/deshi#128。
 
 ### 未解決事項
 
@@ -233,4 +233,4 @@ container 内 agent に公開する MCP tool の命名規則:
 - 全体像: [overview.md](overview.md)
 - ADR 一覧: [adr/](../adr/)
 - 議論の経緯: isbtty/deshi#98
-- Skill 仕様: `.claude/skills/deshi-update-from-upstream/SKILL.md` 他
+- Skill 仕様: `.claude/skills/boswell-update-from-upstream/SKILL.md` 他
