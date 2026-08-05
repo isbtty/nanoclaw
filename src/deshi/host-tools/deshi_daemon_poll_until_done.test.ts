@@ -30,6 +30,8 @@ describe('daemonPollUntilDoneHandler', () => {
   const originalAckThreshold = process.env.DESHI_RUN_ACK_THRESHOLD_MS;
 
   beforeEach(() => {
+    delete process.env.BOSWELL_DAEMON_URL;
+    delete process.env.BOSWELL_DAEMON_DEVICE_SECRET;
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
     vi.mocked(postDeshiRunAck).mockClear();
@@ -290,7 +292,7 @@ describe('daemonPollUntilDoneHandler', () => {
   it('DESHI_DAEMON_DEVICE_SECRET 未設定なら throw する', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
     await expect(daemonPollUntilDoneHandler({ jobId: 'JOB1' })).rejects.toThrow(
-      /DESHI_DAEMON_DEVICE_SECRET is not set/,
+      /BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/,
     );
   });
 

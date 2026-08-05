@@ -27,6 +27,7 @@
  * 規約食い違いが起きる)。
  */
 
+import { MISSING_SECRET_MESSAGE, resolveDaemonEnv } from '../daemon-env.js';
 import { skillExecutionNotificationsHandler } from '../inbound/skill-execution-notifications.js';
 
 export interface DaemonSendFileToChatRequest {
@@ -60,10 +61,9 @@ export interface DaemonSendFileToChatResponse {
 export async function daemonSendFileToChatHandler(body: unknown): Promise<DaemonSendFileToChatResponse> {
   const req = validateRequest(body);
 
-  const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
-  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET;
+  const { url: deshiUrl, secret } = resolveDaemonEnv();
   if (!secret) {
-    throw new Error('DESHI_DAEMON_DEVICE_SECRET is not set on host-tools-server');
+    throw new Error(`${MISSING_SECRET_MESSAGE} on host-tools-server`);
   }
 
   // 1. deshi daemon の `/files/content` から本体を取得 (utf-8 or base64)。

@@ -9,6 +9,8 @@ describe('daemonListSkillsHandler', () => {
 
   beforeEach(() => {
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    delete process.env.BOSWELL_DAEMON_URL;
+    delete process.env.BOSWELL_DAEMON_DEVICE_SECRET;
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
   });
 
@@ -103,7 +105,9 @@ describe('daemonListSkillsHandler', () => {
 
   it('DESHI_DAEMON_DEVICE_SECRET が未設定なら throw する', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
-    await expect(daemonListSkillsHandler({})).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
+    await expect(daemonListSkillsHandler({})).rejects.toThrow(
+      /BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/,
+    );
   });
 
   it('non-2xx の場合は error を throw する', async () => {

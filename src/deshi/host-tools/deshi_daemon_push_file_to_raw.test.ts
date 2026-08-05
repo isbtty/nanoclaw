@@ -11,6 +11,8 @@ describe('daemonPushFileToRawHandler', () => {
 
   beforeEach(() => {
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    delete process.env.BOSWELL_DAEMON_URL;
+    delete process.env.BOSWELL_DAEMON_DEVICE_SECRET;
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
   });
 
@@ -149,7 +151,7 @@ describe('daemonPushFileToRawHandler', () => {
         dest_subpath: 'inbox/nanoclaw/2026-06-10/x.txt',
         sha256: helloSha,
       }),
-    ).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
+    ).rejects.toThrow(/BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/);
   });
 
   it('daemon 4xx をエラーとして透過する (sha256 mismatch 等)', async () => {

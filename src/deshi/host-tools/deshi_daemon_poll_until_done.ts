@@ -19,6 +19,7 @@
  *   prompt 依存だった中間返信を LLM 非依存で保証するための構造対応。
  */
 
+import { MISSING_SECRET_MESSAGE, resolveDaemonEnv } from '../daemon-env.js';
 import { forgetJob, getJobAck } from '../ack-cache.js';
 import { postDeshiRunAck, type DeshiAckChannelContext } from '../post-deshi-ack.js';
 
@@ -88,10 +89,9 @@ export async function daemonPollUntilDoneHandler(body: unknown): Promise<DaemonP
     throw new Error('daemonPollUntilDone: jobId is required');
   }
 
-  const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
-  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET;
+  const { url: deshiUrl, secret } = resolveDaemonEnv();
   if (!secret) {
-    throw new Error('DESHI_DAEMON_DEVICE_SECRET is not set on host-tools-server');
+    throw new Error(`${MISSING_SECRET_MESSAGE} on host-tools-server`);
   }
 
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;
