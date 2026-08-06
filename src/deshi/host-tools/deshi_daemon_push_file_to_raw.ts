@@ -28,7 +28,7 @@
  * ## 認証
  *
  * deshi daemon `/files/upload` は Bearer 必須 (loopback 例外なし)。
- * `DESHI_DAEMON_DEVICE_SECRET` を本プロセスから付与する。
+ * `BOSWELL_DAEMON_DEVICE_SECRET` (旧名 `DESHI_DAEMON_DEVICE_SECRET` も可) を本プロセスから付与する。
  *
  * ## エラー
  *

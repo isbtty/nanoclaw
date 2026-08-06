@@ -9,7 +9,7 @@
  * host-tools-server 側で完結する (案 B、isbtty/deshi#199 工程 5)。
  *
  * deshi daemon の `GET /jobs/:jobId` には auto-auth が通らないため、
- * `DESHI_DAEMON_DEVICE_SECRET` 環境変数の Bearer を必須とする。
+ * `BOSWELL_DAEMON_DEVICE_SECRET` (旧名 `DESHI_DAEMON_DEVICE_SECRET` も可) の Bearer を必須とする。
  *
  * 中間 ack の構造配信 (isbtty/deshi#423):
  *   job が `DESHI_RUN_ACK_THRESHOLD_MS` (default 8s) を超えても pending の

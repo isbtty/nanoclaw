@@ -88,8 +88,17 @@ describe('daemon 接続情報の解決', () => {
       });
     });
 
-    it('.env の新しいキーより、プロセス環境変数の旧キーを優先する', () => {
-      process.env.DESHI_DAEMON_DEVICE_SECRET = 'from-process-env';
+    // secret rotation 時に plist に残った旧キーが `.env` の新しい値に勝つと
+    // 401 が続くため、source (process.env / .env) よりキー名の新しさを優先する。
+    it('plist 由来の旧キーが環境に残っていても、.env に新しいキーがあればそちらを使う', () => {
+      process.env.DESHI_DAEMON_DEVICE_SECRET = 'stale-from-plist';
+      readEnvFileMock.mockReturnValue({ BOSWELL_DAEMON_DEVICE_SECRET: 'rotated-in-dotenv' });
+
+      expect(resolveDaemonEnvWithDotenv().secret).toEqual('rotated-in-dotenv');
+    });
+
+    it('同じキー名が環境と .env の両方にある場合は、環境側を優先する', () => {
+      process.env.BOSWELL_DAEMON_DEVICE_SECRET = 'from-process-env';
       readEnvFileMock.mockReturnValue({ BOSWELL_DAEMON_DEVICE_SECRET: 'from-dotenv' });
 
       expect(resolveDaemonEnvWithDotenv().secret).toEqual('from-process-env');

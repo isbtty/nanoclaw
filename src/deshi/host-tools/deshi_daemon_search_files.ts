@@ -11,7 +11,7 @@
  * 叩いて探索する用途を高速化する (ADR-0009 host-tools 命名規則準拠)。
  *
  * 認証: deshi daemon の `/files/search` は Bearer 必須 (authed 配下にマウント)。
- * したがって `DESHI_DAEMON_DEVICE_SECRET` 環境変数の Bearer を必須とする。
+ * したがって `BOSWELL_DAEMON_DEVICE_SECRET` (旧名 `DESHI_DAEMON_DEVICE_SECRET` も可) の Bearer を必須とする。
  *
  * Daemon 側エラーコード対応:
  *   - 503 + `qmd is not installed on server` → 運用機に qmd CLI が未インストール

@@ -186,10 +186,14 @@ PNPM_PATH="$(command -v pnpm)"
 # .env のキー名は新 BOSWELL_ 優先 / 旧 DESHI_ フォールバック。
 # plist に書き込むキー名 (テンプレートの __DESHI_DAEMON_*__) は旧名のまま:
 # host-tools-server は新旧どちらの env 名でも読む (src/deshi/daemon-env.ts)。
-read_env_key() { grep -m1 -E "^($1)=" .env | cut -d= -f2- | tr -d '"'; }
-DESHI_DAEMON_URL="$(read_env_key 'BOSWELL_DAEMON_URL|DESHI_DAEMON_URL')"
+# 1 回の grep で両方を拾うと「.env で先に書かれている方」が当たってしまうので、
+# BOSWELL_ を引いてから空のときだけ DESHI_ を引く。
+read_env_key() { grep -m1 "^$1=" .env | cut -d= -f2- | tr -d '"'; }
+DESHI_DAEMON_URL="$(read_env_key BOSWELL_DAEMON_URL)"
+DESHI_DAEMON_URL="${DESHI_DAEMON_URL:-$(read_env_key DESHI_DAEMON_URL)}"
 DESHI_DAEMON_URL="${DESHI_DAEMON_URL:-http://localhost:3100}"
-DESHI_DAEMON_DEVICE_SECRET="$(read_env_key 'BOSWELL_DAEMON_DEVICE_SECRET|DESHI_DAEMON_DEVICE_SECRET')"
+DESHI_DAEMON_DEVICE_SECRET="$(read_env_key BOSWELL_DAEMON_DEVICE_SECRET)"
+DESHI_DAEMON_DEVICE_SECRET="${DESHI_DAEMON_DEVICE_SECRET:-$(read_env_key DESHI_DAEMON_DEVICE_SECRET)}"
 DEST="$HOME/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist"
 
 if [ -z "$DESHI_DAEMON_DEVICE_SECRET" ]; then

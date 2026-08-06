@@ -30,8 +30,8 @@ describe('daemonPollUntilDoneHandler', () => {
   const originalAckThreshold = process.env.DESHI_RUN_ACK_THRESHOLD_MS;
 
   beforeEach(() => {
-    delete process.env.BOSWELL_DAEMON_URL;
-    delete process.env.BOSWELL_DAEMON_DEVICE_SECRET;
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
     vi.mocked(postDeshiRunAck).mockClear();
@@ -39,6 +39,7 @@ describe('daemonPollUntilDoneHandler', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalSecret === undefined) {
       delete process.env.DESHI_DAEMON_DEVICE_SECRET;

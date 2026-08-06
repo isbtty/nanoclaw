@@ -16,10 +16,13 @@ describe('daemonRunSkillHandler', () => {
   const originalUrl = process.env.DESHI_DAEMON_URL;
 
   beforeEach(() => {
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) {
       delete process.env.DESHI_DAEMON_URL;
