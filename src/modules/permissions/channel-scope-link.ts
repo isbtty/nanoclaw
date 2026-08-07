@@ -1,23 +1,23 @@
 /**
  * Knowledge-scope onboarding link (isbtty/deshi#396, Slice 5 — nanoclaw side).
  *
- * When the owner wires a newly-registered channel to a deshi-backed agent
- * group, we DM them a signed one-time link that opens deshi's scope-selection
+ * When the owner wires a newly-registered channel to a boswell-backed agent
+ * group, we DM them a signed one-time link that opens boswell's scope-selection
  * page for this channel. The owner picks which wiki subtrees the channel may
- * see; deshi persists the choice and enforces it on the scoped knowledge
- * window `/deshi-knowledge-search` via the scoped knowledge MCP (isbtty/deshi
+ * see; boswell persists the choice and enforces it on the scoped knowledge
+ * window `/boswell-knowledge-search` via the scoped knowledge MCP (isbtty/deshi
  * ADR-0010 split the scoped knowledge window out of the full-capability
- * `/deshi-general`; nanoclaw classifies intent and routes knowledge questions
+ * `/boswell-general`; nanoclaw classifies intent and routes knowledge questions
  * to the former).
  * nanoclaw is a thin relay here — it only mints the link
  * (`POST /knowledge/scope-link`) and forwards the URL.
  *
- * Gated on the wired agent group actually using the `deshi` MCP server: a
- * non-deshi group has no scoped-knowledge layer, so the link would be
- * meaningless. Brand-new agent groups (create-new-agent flow) have no deshi
+ * Gated on the wired agent group actually using the `boswell` MCP server: a
+ * non-boswell group has no scoped-knowledge layer, so the link would be
+ * meaningless. Brand-new agent groups (create-new-agent flow) have no boswell
  * server by default and are skipped naturally.
  *
- * Best-effort: any failure (no deshi, daemon down, no approver DM) is logged
+ * Best-effort: any failure (no boswell, daemon down, no approver DM) is logged
  * and swallowed so it never blocks wiring or the message replay. The connect
  * flow ignores the return; the on-demand re-issue command
  * (`/update-knowledge-scope`, see `knowledge-scope-command.ts`) uses it to
@@ -32,13 +32,17 @@ import { ensureUserDm } from './user-dm.js';
 
 export type ScopeLinkResult = { ok: true } | { ok: false; reason: 'not-deshi' | 'no-mg' | 'no-dm' | 'error' };
 
-/** True when the agent group's container config wires the `deshi` MCP server. */
-function usesDeshiMcp(agentGroupId: string): boolean {
+/**
+ * True when the agent group's container config wires the `boswell` MCP server.
+ * Migration 019 renamed the mcp_servers key `deshi` → `boswell`; the legacy
+ * `deshi` key is still accepted as a fallback for any un-migrated config.
+ */
+function usesBoswellMcp(agentGroupId: string): boolean {
   const row = getContainerConfig(agentGroupId);
   if (!row?.mcp_servers) return false;
   try {
     const servers = JSON.parse(row.mcp_servers) as Record<string, unknown>;
-    return Boolean(servers.deshi);
+    return Boolean(servers.boswell ?? servers.deshi);
   } catch {
     return false;
   }
@@ -62,8 +66,8 @@ export async function maybeDeliverScopeLink(
    */
   preamble?: string,
 ): Promise<ScopeLinkResult> {
-  if (!usesDeshiMcp(agentGroupId)) {
-    log.debug('Scope-link skipped — agent group does not use the deshi MCP server', { agentGroupId });
+  if (!usesBoswellMcp(agentGroupId)) {
+    log.debug('Scope-link skipped — agent group does not use the boswell MCP server', { agentGroupId });
     return { ok: false, reason: 'not-deshi' };
   }
 

@@ -16,7 +16,7 @@
 # このスクリプトは pnpm install までは行わない (lockfile への影響を最小化するため、
 # 呼び出し側で `pnpm install` を実行する責務を持つ)。
 #
-# /deshi-update-nanoclaw-official-channels skill から呼ばれる前提だが、単独実行も可。
+# /boswell-update-nanoclaw-official-channels skill から呼ばれる前提だが、単独実行も可。
 #
 # 環境変数:
 #   DESHI_CHANNELS_REF — 取り込み元の git ref (未指定時は upstream/channels HEAD)
@@ -71,7 +71,7 @@ fi
 # merge-base(upstream/main, upstream/channels) を upstream.main.sha に書き込む運用。
 # よって本スクリプトの BASE_REF も自動的に共通祖先になり、channels との差分計算が
 # 「共通祖先 → channels HEAD」= channels 固有の変更のみ、になる。
-# `/deshi-update-from-upstream` を先に走らせて upstream.main.sha が共通祖先を指していることが前提。
+# `/boswell-update-from-upstream` を先に走らせて upstream.main.sha が共通祖先を指していることが前提。
 if [[ -z "$BASE_REF" ]]; then
   BASE_REF="$(python3 -c "import json; print(json.load(open('$VERSIONS_FILE'))['upstream']['main']['sha'])")"
 fi

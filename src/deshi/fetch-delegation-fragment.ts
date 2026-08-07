@@ -1,14 +1,14 @@
 import { readEnvFile } from '../env.js';
 
 /**
- * Fetch the deshi MCP delegation policy fragment from deshi daemon's
+ * Fetch the boswell MCP delegation policy fragment from boswell daemon's
  * `GET /nanoclaw-fragment` (isbtty/deshi#319, #322).
  *
  * Called from `claude-md-compose.ts` at group spawn time when the group's
- * `mcp_servers` includes `deshi`. The returned markdown becomes the body
- * of `.claude-fragments/mcp-deshi.md`, which is imported by the group's
- * CLAUDE.md. The deshi side re-reads its source file on every call, so
- * editing `<deshi-repo>/.deshi/nanoclaw-delegation.md` takes effect on
+ * `mcp_servers` includes `boswell`. The returned markdown becomes the body
+ * of `.claude-fragments/mcp-boswell.md`, which is imported by the group's
+ * CLAUDE.md. The boswell side re-reads its source file on every call, so
+ * editing `<boswell-repo>/.boswell/nanoclaw-delegation.md` takes effect on
  * the next spawn without restarting either daemon.
  *
  * Not registered as an MCP tool — the agent never needs to call this.

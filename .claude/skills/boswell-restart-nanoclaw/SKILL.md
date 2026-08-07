@@ -1,16 +1,16 @@
 ---
-name: deshi-restart-nanoclaw
+name: boswell-restart-nanoclaw
 description: nanoclaw の常駐環境 (host / host-tools / コンテナ) を最新ソースに refresh する — git pull / pnpm build / launchd kickstart / コンテナ再 spawn / health check をまとめて実行 (project)
 user-invocable: true
 allowed-tools: Bash, Read
 ---
 
-# `/deshi-restart-nanoclaw` — nanoclaw 環境リフレッシュ
+# `/boswell-restart-nanoclaw` — nanoclaw 環境リフレッシュ
 
 ## 概要
 
 nanoclaw (isbtty/nanoclaw fork) の常駐環境を「最新の健全な状態」に揃える運用スキル。
-deshi 側の `/deshi-restart-services` の nanoclaw 版 (別スキル・別リポジトリ)。
+boswell 側の `/boswell-restart-services` の nanoclaw 版 (別スキル・別リポジトリ)。
 
 対象は 3 つ:
 
@@ -38,7 +38,7 @@ deshi 側の `/deshi-restart-services` の nanoclaw 版 (別スキル・別リ�
 ## 引数
 
 ```
-/deshi-restart-nanoclaw [flags...] [target...]
+/boswell-restart-nanoclaw [flags...] [target...]
 ```
 
 | flag | 効果 |
@@ -115,7 +115,7 @@ tsx が src を直実行するのでビルド不要。
 `enforceUpgradeTripwire`([src/upgrade-state.ts](../../../src/upgrade-state.ts)) は
 「marker が現行 `package.json` version と一致」しないと `exit(1)` で起動を拒否する。
 marker は `data/upgrade-state.json`(install ごと・gitignore)なので **git pull では
-運べず**、通常は setup / update / migrate の3経路だけが自動 stamp する。deshi では
+運べず**、通常は setup / update / migrate の3経路だけが自動 stamp する。boswell では
 **このスキルが正規デプロイ経路**なので、`git pull` + `pnpm build` が成功した時点を
 「サンクション経路完了」とみなして stamp する。これにより **version が上がる更新を
 生 pull で入れても、このスキル一発で tripwire まで面倒を見る**(手動 `upgrade-state.ts
@@ -135,7 +135,7 @@ if [ "$DO_BUILD" = 1 ] && [ "$NEEDS_BUILD" = 1 ]; then
     # version 無指定は package.json 版を採用。stamp 失敗は致命ではない (host 起動時に
     # tripwire が明示的に落として logs に理由を出すので、握り潰さず warn に留める)。
     if [ -f scripts/upgrade-state.ts ]; then
-      if OUT=$(pnpm exec tsx scripts/upgrade-state.ts set "" deshi-restart-nanoclaw 2>&1); then
+      if OUT=$(pnpm exec tsx scripts/upgrade-state.ts set "" boswell-restart-nanoclaw 2>&1); then
         echo "  ✓ upgrade marker stamped: $(echo "$OUT" | tail -1)"
       else
         echo "  ⚠ upgrade marker stamp 失敗 (host が tripwire で止まる可能性): $(echo "$OUT" | tail -1)"
@@ -328,7 +328,7 @@ echo; echo "[restart-nanoclaw] done: $ok ok, $fail failed"
 | ③B (deshi `.deshi/nanoclaw-delegation.md`) | group 再 spawn 時に daemon `/nanoclaw-fragment` から再取得 → `containers` 再 spawn |
 | host src (`src/**`) 変更 | `host` build + kickstart |
 
-つまり #416 の nanoclaw 側コード反映は通常 **`/deshi-restart-nanoclaw containers`** で足りる。
+つまり #416 の nanoclaw 側コード反映は通常 **`/boswell-restart-nanoclaw containers`** で足りる。
 
 ### kickstart で復旧しない場合
 
@@ -343,4 +343,4 @@ load サイクルが必要。ログは `${REPO_ROOT}/logs/` 配下を確認。
 - ADR-0016 (`restart` 動詞追加) — 本スキルの命名根拠
 - `src/install-slug.ts` — host label 動的生成
 - `setup/launchd/com.isbtty.nanoclaw.host-tools.plist` — host-tools launchd
-- deshi `.claude/skills/deshi-restart-services/` — deshi 側 (別スキル・据え置き)
+- boswell `.claude/skills/boswell-restart-services/` — boswell 側 (別スキル・別リポジトリ)

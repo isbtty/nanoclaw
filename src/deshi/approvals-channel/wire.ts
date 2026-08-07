@@ -26,7 +26,7 @@
  * `user_dms` を経由するのは承認/招待/知識リンクの host 起点通知だけ。ユーザー起点の
  * 普通の DM 会話は `user_dms` を通らないため一切影響を受けない。
  *
- * 実機での実行は setup skill `/deshi-route-approvals-to-channel` 経由（別 Mac mini 上）。
+ * 実機での実行は setup skill `/boswell-route-approvals-to-channel` 経由（別 Mac mini 上）。
  */
 import {
   createMessagingGroup,

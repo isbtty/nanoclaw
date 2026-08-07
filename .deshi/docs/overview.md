@@ -7,8 +7,8 @@
 ```
 upstream: nanocoai/nanoclaw  (main + channels を追従)
     │
-    │  /deshi-update-from-upstream
-    │   └─ 内部で /deshi-update-nanoclaw-official-channels update を自動呼出
+    │  /boswell-update-from-upstream
+    │   └─ 内部で /boswell-update-nanoclaw-official-channels update を自動呼出
     ▼
 isbtty/nanoclaw (main)                  ← Tier A + Tier B
     │  v0.X.Y tag 発行
@@ -27,9 +27,9 @@ isbtty/nanoclaw (main)                  ← Tier A + Tier B
 
 | Skill | 何をするか | 頻度 |
 |-------|-----------|------|
-| `/deshi-update-from-upstream` | upstream main を deshi に取り込むラッパー (内部で channels skill を自動呼出) | 任意のタイミング |
-| `/deshi-update-nanoclaw-official-channels` | `upstream/channels` から `installed` 配列の channel を一括再適用 | 上記から自動呼出 (単独実行も可) |
-| `/deshi-add-host-tools` | container 内 agent が host 側を叩くための MCP bridge を agent group に追加 (`mcp__deshi__*` namespace) | agent group ごとに 1 回 |
+| `/boswell-update-from-upstream` | upstream main を deshi に取り込むラッパー (内部で channels skill を自動呼出) | 任意のタイミング |
+| `/boswell-update-nanoclaw-official-channels` | `upstream/channels` から `installed` 配列の channel を一括再適用 | 上記から自動呼出 (単独実行も可) |
+| `/boswell-add-host-tools` | container 内 agent が host 側を叩くための MCP bridge を agent group に追加 (`mcp__deshi__*` namespace) | agent group ごとに 1 回 |
 
 `mcp__deshi__*` 系 tool の命名規則は [docs/mcp-tool-naming.md](mcp-tool-naming.md) を参照。
 
@@ -39,9 +39,9 @@ isbtty/nanoclaw (main)                  ← Tier A + Tier B
 isbtty/nanoclaw/
 ├── .claude/skills/
 │   ├── add-slack/                       ← Tier A (upstream、触らない)
-│   ├── deshi-update-from-upstream/      ← Tier B Operational
-│   ├── deshi-update-nanoclaw-official-channels/
-│   └── deshi-add-host-tools/            ← Tier B Feature (host-tools MCP bridge)
+│   ├── boswell-update-from-upstream/      ← Tier B Operational
+│   ├── boswell-update-nanoclaw-official-channels/
+│   └── boswell-add-host-tools/         ← Tier B Feature (host-tools MCP bridge)
 │
 ├── src/deshi/                           ← deshi 専有 namespace (host 側)
 │   ├── index.ts
@@ -84,8 +84,8 @@ isbtty/nanoclaw/
 
 ### 上流追従 (upstream → deshi)
 
-1. `/deshi-update-from-upstream` を `isbtty/nanoclaw` で実行
-2. 内部で `/deshi-update-nanoclaw-official-channels update` が自動呼出され、channels も同期される
+1. `/boswell-update-from-upstream` を `isbtty/nanoclaw` で実行
+2. 内部で `/boswell-update-nanoclaw-official-channels update` が自動呼出され、channels も同期される
 3. validation 通過後、`v0.X.Y` tag が打たれる
 4. `main` への push と PR 作成は人間判断 (Skill は sync branch までで止まる)
 

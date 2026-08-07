@@ -173,7 +173,7 @@ curl -s -X POST http://127.0.0.1:5180/tools/deshi_daemon_foo \
 | host 用 handler | `src/deshi/host-tools/<httpName>.ts` (`<httpName>` = `deshi_<...>` または `health`) | host の Node プロセスで実行 |
 | handler barrel | `src/deshi/host-tools/index.ts` | host-tools-server が import |
 | container 用 MCP stdio | `container/skills/deshi-add-host-tools/deshi-mcp-stdio.ts` | container 内 `/app/skills/deshi-add-host-tools/` に mount |
-| skill SKILL.md | `.claude/skills/deshi-add-host-tools/SKILL.md` | host 側 Claude Code が読み込み (container には行かない) |
+| skill SKILL.md | `.claude/skills/boswell-add-host-tools/SKILL.md` | host 側 Claude Code が読み込み (container には行かない) |
 | launchd plist テンプレート | `setup/launchd/com.isbtty.nanoclaw.host-tools.plist` | skill が `~/Library/LaunchAgents/` に展開 |
 
 ## agent から見える tool 名一覧 (現状)
@@ -209,4 +209,4 @@ allowedTools: [
 
 - [ADR-0009](../adr/0009-mcp-tool-naming.md) — 本ルールの正式な判断記録
 - [ADR-0002](../adr/0002-deshi-namespace.md) — namespace 隔離 (deshi コードは `src/deshi/**` と `container/skills/deshi-*/`)
-- skill: `.claude/skills/deshi-add-host-tools/SKILL.md`
+- skill: `.claude/skills/boswell-add-host-tools/SKILL.md`

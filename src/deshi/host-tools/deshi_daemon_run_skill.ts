@@ -41,7 +41,7 @@ function buildSummaryPrompt(input: string): string {
     '- 12〜18 文字以内 (日本語)',
     '- 文末は「〜してます」または「〜中」',
     '- 末尾に内容を表す絵文字を 1 つ',
-    '- 専門用語 / 英語の skill 名 (/deshi-xxx 等) は使わない',
+    '- 専門用語 / 英語の skill 名 (/boswell-xxx 等) は使わない',
     '- 説明や前置きは出力せず、要約 1 行のみを出力',
     '',
     '指示:',

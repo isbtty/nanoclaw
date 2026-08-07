@@ -1,11 +1,11 @@
 ---
-name: deshi-manage-slack-workspaces
+name: boswell-manage-slack-workspaces
 description: 追加の Slack ワークスペースを nanoclaw に接続する運用スキル (ADR-0018)。DESHI_SLACK_WORKSPACES への suffix 宣言 → Slack App 作成 → .env 配線 → 再起動 → ncl 配線までを誘導する。削除手順も含む。トリガー: "ワークスペース追加", "add slack workspace", "2つ目のSlack", "クライアントのSlackにも入れたい" (project)
 user-invocable: true
 allowed-tools: Bash, Read, Edit, AskUserQuestion
 ---
 
-# `/deshi-manage-slack-workspaces` — 追加 Slack ワークスペースの管理
+# `/boswell-manage-slack-workspaces` — 追加 Slack ワークスペースの管理
 
 ## 概要
 
@@ -137,4 +137,4 @@ ncl wirings create --messaging-group-id <id> --agent-group-id <id>
 
 - 設計: `.deshi/adr/0018-slack-multi-workspace.md` / isbtty/deshi#560 / isbtty/nanoclaw#72
 - 実装: `src/deshi/channels/slack-instances.ts`(upstream `slack.ts` のミラー)
-- upstream 取込時のドリフト確認: `/deshi-update-from-upstream` のチェックリスト
+- upstream 取込時のドリフト確認: `/boswell-update-from-upstream` のチェックリスト
