@@ -372,6 +372,57 @@ describe('unknown-channel registration flow', () => {
     expect(fetchScopeLinkMock).not.toHaveBeenCalled();
   });
 
+  it('新しい agent を作る承認でも、agent 生成からチャンネル配線まで通ること', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { getResponseHandlers } = await import('../../response-registry.js');
+    const { NEW_AGENT_VALUE } = await import('./channel-approval.js');
+    const { getDb } = await import('../../db/connection.js');
+
+    await routeInbound(groupMention('chat-new-agent'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+      messaging_group_id: string;
+    };
+    for (const handler of getResponseHandlers()) {
+      const claimed = await handler({
+        questionId: pending.messaging_group_id,
+        value: NEW_AGENT_VALUE,
+        userId: 'owner',
+        channelType: 'telegram',
+        platformId: 'dm-owner',
+        threadId: null,
+      });
+      if (claimed) break;
+    }
+
+    // 承認者は自分の DM に返ってきた名前入力プロンプトに答える。
+    await routeInbound({
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+      message: {
+        id: 'msg-name-input',
+        kind: 'chat' as const,
+        content: JSON.stringify({ senderId: 'owner', senderName: 'Owner', text: 'Bravo' }),
+        timestamp: now(),
+        isMention: true,
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const created = getDb().prepare('SELECT id FROM agent_groups WHERE name = ?').get('Bravo') as
+      | { id: string }
+      | undefined;
+    expect(created).toBeDefined();
+    const mg = getMessagingGroupByPlatform('telegram', 'chat-new-agent');
+    expect(
+      getDb()
+        .prepare('SELECT id FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?')
+        .get(mg!.id, created!.id),
+    ).toBeDefined();
+  });
+
   it('approve on a thread-less group (LINE-style, isGroup=true, threadId=null) wires "mention", not "pattern"', async () => {
     const { routeInbound } = await import('../../router.js');
     const { getResponseHandlers } = await import('../../response-registry.js');

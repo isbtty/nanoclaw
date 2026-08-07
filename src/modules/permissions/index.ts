@@ -43,7 +43,7 @@ import {
   requestChannelApproval,
 } from './channel-approval.js';
 import { maybeDeliverScopeLink } from './channel-scope-link.js';
-import { isPermissionSplitGroup } from '../../deshi/permission-split.js';
+import { skipsDmScopeLink } from '../../deshi/permission-split.js';
 import { addMember } from './db/agent-group-members.js';
 import {
   deletePendingChannelApproval,
@@ -102,21 +102,6 @@ function extractAndUpsertUser(event: InboundEvent): string | null {
     });
   }
   return userId;
-}
-
-/**
- * DM への知識スコープリンク自動発行を飛ばすか。
- *
- * 権限分離モードの組織では、知識検索はチャンネルでのみ行い DM は対象外と決めて
- * いる (ADR-0019)。DM の channel scope は「その人の私的チャットに知識を開ける」
- * という誰も依頼していない権限付与になるため。
- *
- * **それ以外の組織では従来どおり発行する** (ADR-0019 §0)。権限分離を入れずに
- * 使う場合、bot と DM でやり取りしたい場面は普通にあり、そこで知識を引けないと
- * 困る。`/update-knowledge-scope` からの明示発行はどちらの場合も通る。
- */
-function skipsDmScopeLink(agentGroupId: string, isGroup: boolean): boolean {
-  return !isGroup && isPermissionSplitGroup(agentGroupId);
 }
 
 function safeParseContent(raw: string): { text?: string; sender?: string; senderId?: string } {
@@ -681,9 +666,9 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   // group using the deshi MCP server, so this is a no-op unless it was created
   // deshi-backed; harmless either way.
   //
-  // DM の抑止 (skipsDmScopeLink) はここには要らない。この経路が作るのは生成
-  // 直後の agent group で、権限分離モードへの登録はセットアップスキルが後から
-  // 行うため、判定は必ず「対象外」になる。
+  // DM の抑止 (skipsDmScopeLink) はここには要らない。この経路で作られる agent
+  // group は boswell MCP を持たないため maybeDeliverScopeLink 自体が no-op で、
+  // 抑止すべき発行がそもそも起きない。
   await maybeDeliverScopeLink(ag.id, row.messaging_group_id, row.approver_user_id);
   return true;
 });

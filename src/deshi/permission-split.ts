@@ -13,33 +13,33 @@ import { getDb } from '../db/connection.js';
 
 /** この agent group が権限分離モードか。未登録なら false = 従来どおり。 */
 export function isPermissionSplitGroup(agentGroupId: string): boolean {
-  const row = getDb()
-    .prepare('SELECT 1 AS present FROM permission_split_groups WHERE agent_group_id = ?')
-    .get(agentGroupId) as { present: number } | undefined;
-  return row !== undefined;
+  return (
+    getDb().prepare('SELECT 1 FROM permission_split_groups WHERE agent_group_id = ?').get(agentGroupId) !== undefined
+  );
 }
 
 /** 権限分離モードに登録する。冪等。 */
-export function enablePermissionSplit(agentGroupId: string, now: Date = new Date()): void {
+export function enablePermissionSplit(agentGroupId: string): void {
   getDb()
     .prepare(
       `INSERT INTO permission_split_groups (agent_group_id, enabled_at)
        VALUES (?, ?)
        ON CONFLICT(agent_group_id) DO NOTHING`,
     )
-    .run(agentGroupId, now.toISOString());
+    .run(agentGroupId, new Date().toISOString());
 }
 
-/** 権限分離モードから外す。外すと従来の挙動に戻る。 */
-export function disablePermissionSplit(agentGroupId: string): boolean {
-  return getDb().prepare('DELETE FROM permission_split_groups WHERE agent_group_id = ?').run(agentGroupId).changes > 0;
-}
-
-/** 登録済みの agent group id を返す (診断・一覧用)。 */
-export function listPermissionSplitGroups(): string[] {
-  return (
-    getDb().prepare('SELECT agent_group_id FROM permission_split_groups ORDER BY enabled_at').all() as Array<{
-      agent_group_id: string;
-    }>
-  ).map((r) => r.agent_group_id);
+/**
+ * DM への知識スコープリンク自動発行を飛ばすか。
+ *
+ * 権限分離モードの組織では、知識検索はチャンネルでのみ行い DM は対象外と決めて
+ * いる (ADR-0019)。DM の channel scope は「その人の私的チャットに知識を開ける」
+ * という誰も依頼していない権限付与になるため。
+ *
+ * **それ以外の組織では従来どおり発行する** (ADR-0019 §0)。権限分離を入れずに
+ * 使う場合、bot と DM でやり取りしたい場面は普通にあり、そこで知識を引けないと
+ * 困る。`/update-knowledge-scope` からの明示発行はどちらの場合も通る。
+ */
+export function skipsDmScopeLink(agentGroupId: string, isGroup: boolean): boolean {
+  return !isGroup && isPermissionSplitGroup(agentGroupId);
 }

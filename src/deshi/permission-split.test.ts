@@ -2,12 +2,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { initTestDb, closeDb, runMigrations } from '../db/index.js';
 import { createAgentGroup } from '../db/agent-groups.js';
-import {
-  disablePermissionSplit,
-  enablePermissionSplit,
-  isPermissionSplitGroup,
-  listPermissionSplitGroups,
-} from './permission-split.js';
+import { enablePermissionSplit, isPermissionSplitGroup, skipsDmScopeLink } from './permission-split.js';
 
 function now() {
   return new Date().toISOString();
@@ -40,18 +35,7 @@ describe('権限分離モードの適用範囲', () => {
     enablePermissionSplit('ag-lab');
     enablePermissionSplit('ag-lab');
 
-    expect(listPermissionSplitGroups()).toEqual(['ag-lab']);
-  });
-
-  it('登録を外すと、従来どおりの扱いに戻ること', () => {
-    enablePermissionSplit('ag-lab');
-
-    expect(disablePermissionSplit('ag-lab')).toEqual(true);
-    expect(isPermissionSplitGroup('ag-lab')).toEqual(false);
-  });
-
-  it('登録されていないものを外そうとしたときは、何も起きなかったと分かること', () => {
-    expect(disablePermissionSplit('ag-lab')).toEqual(false);
+    expect(isPermissionSplitGroup('ag-lab')).toEqual(true);
   });
 
   it('ワークスペースごと削除されても、登録が取り残されないこと', async () => {
@@ -59,6 +43,28 @@ describe('権限分離モードの適用範囲', () => {
     const { getDb } = await import('../db/connection.js');
 
     expect(() => getDb().prepare('DELETE FROM agent_groups WHERE id = ?').run('ag-lab')).not.toThrow();
-    expect(listPermissionSplitGroups()).toEqual([]);
+    expect(getDb().prepare('SELECT 1 FROM permission_split_groups').get()).toBeUndefined();
+  });
+});
+
+describe('DM への知識スコープリンクを飛ばすかの判定', () => {
+  it('権限分離を入れた組織の DM では、飛ばすこと', () => {
+    enablePermissionSplit('ag-lab');
+
+    expect(skipsDmScopeLink('ag-lab', false)).toEqual(true);
+  });
+
+  it('権限分離を入れた組織でも、共有チャンネルなら飛ばさないこと', () => {
+    enablePermissionSplit('ag-lab');
+
+    expect(skipsDmScopeLink('ag-lab', true)).toEqual(false);
+  });
+
+  it('権限分離を入れていない組織では、DM でも飛ばさないこと', () => {
+    expect(skipsDmScopeLink('ag-other', false)).toEqual(false);
+  });
+
+  it('権限分離を入れていない組織の共有チャンネルでも、飛ばさないこと', () => {
+    expect(skipsDmScopeLink('ag-other', true)).toEqual(false);
   });
 });
