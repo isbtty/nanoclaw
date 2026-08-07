@@ -11,6 +11,12 @@ import type { Migration } from './index.js';
  *
  * expires_at は ISO 8601 文字列。TTL 切れの行は host-sweep が掃除する
  * (索引はその走査用)。
+ *
+ * FK はすべて ON DELETE CASCADE。中央 DB は foreign_keys=ON で動くため、
+ * cascade を付けないと `ncl groups delete` (agent group → sessions → ... と
+ * FK 順に子を消すトランザクション) や `deleteUser` が、生きたトークンを持つ
+ * 相手に対して FOREIGN KEY constraint failed で全体ロールバックする。
+ * トークンは 30 分で失効する使い捨てなので、親が消えるなら道連れで正しい。
  */
 export const migration020: Migration = {
   version: 20,
@@ -19,10 +25,10 @@ export const migration020: Migration = {
     db.exec(`
       CREATE TABLE sender_tokens (
         token              TEXT PRIMARY KEY,
-        user_id            TEXT NOT NULL REFERENCES users(id),
-        messaging_group_id TEXT NOT NULL REFERENCES messaging_groups(id),
-        agent_group_id     TEXT NOT NULL REFERENCES agent_groups(id),
-        session_id         TEXT NOT NULL REFERENCES sessions(id),
+        user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        messaging_group_id TEXT NOT NULL REFERENCES messaging_groups(id) ON DELETE CASCADE,
+        agent_group_id     TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+        session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         issued_at          TEXT NOT NULL,
         expires_at         TEXT NOT NULL
       );

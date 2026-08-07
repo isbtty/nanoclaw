@@ -144,6 +144,23 @@ describe('sender token', () => {
     });
   });
 
+  describe('参照先が消えたとき', () => {
+    it('セッションを削除しても止められず、トークンも道連れで消えること', async () => {
+      const token = issueFor();
+      const { getDb } = await import('../db/connection.js');
+
+      expect(() => getDb().prepare('DELETE FROM sessions WHERE id = ?').run('sess-1')).not.toThrow();
+      expect(resolveSenderToken(token)).toBeNull();
+    });
+
+    it('ユーザーを削除しても止められないこと', async () => {
+      issueFor();
+      const { getDb } = await import('../db/connection.js');
+
+      expect(() => getDb().prepare('DELETE FROM users WHERE id = ?').run('slack:U1')).not.toThrow();
+    });
+  });
+
   describe('メッセージへの差し込み', () => {
     const ctx = {
       userId: 'slack:U1',

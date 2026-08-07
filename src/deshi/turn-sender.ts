@@ -13,9 +13,10 @@
  * を突き合わせて発言者を引く。**LLM は経路に一切登場しない**ため、トークンを
  * プロンプトに載せる必要も、agent にトークンを引用させる必要もない。
  *
- * ターンに複数人の発言が混ざっている場合は、どちらの依頼か機械的に決められない
- * ので `mixed-senders` で断る (fail-closed)。同一人物の複数発言は曖昧ではない
- * ので通す。
+ * 判定はすべて fail-closed。ターンに含まれるユーザー発話のうち 1 つでも発言者を
+ * 引けないものがあれば、残りが揃っていても依頼者は確定させない。1 人でも他人の
+ * 発話が混ざれば断る。ユーザー発話以外 (system / CLI 応答など) は依頼者の判定に
+ * 使わないので数えない。
  *
  * ## この仕組みが守らないもの
  *
@@ -32,32 +33,48 @@ import { resolveSenderToken, type SenderToken } from './sender-token.js';
 
 export type TurnSender =
   | { ok: true; userId: string; token: SenderToken }
-  | { ok: false; reason: 'no-token' | 'expired' | 'mixed-senders' };
+  | { ok: false; reason: 'no-user-message' | 'unresolved' | 'expired' | 'mixed-senders' };
+
+/** 依頼者の判定に使うメッセージ種別。system / CLI 応答は依頼ではないので除く。 */
+const USER_MESSAGE_KINDS = ['chat', 'chat-sdk'];
 
 /**
  * このターンの依頼者を引く。呼び出し側は `ok: false` を「権限が要る操作は断る」
  * として扱う。
  */
 export function resolveTurnSender(agentGroupId: string, sessionId: string, now: Date = new Date()): TurnSender {
-  const tokens = readProcessingTokens(agentGroupId, sessionId);
-  if (tokens.length === 0) return { ok: false, reason: 'no-token' };
+  const contents = readProcessingUserMessages(agentGroupId, sessionId);
+  if (contents.length === 0) return { ok: false, reason: 'no-user-message' };
 
-  const resolved = tokens.map((t) => resolveSenderToken(t, now)).filter((r): r is SenderToken => r !== null);
-  if (resolved.length === 0) return { ok: false, reason: 'expired' };
+  const tokens = contents.map(extractToken);
+  // 1 つでも発行の記録が無い発話があれば、そのターンに誰がいたのか分からない。
+  // 引けた分だけで多数決すると、未登録 sender の発話が混ざったターンを
+  // 「1 人分」と誤認する (fail-open) ので、ここで断つ。
+  if (tokens.some((t) => t === null)) return { ok: false, reason: 'unresolved' };
 
-  const userIds = new Set(resolved.map((r) => r.user_id));
+  const resolved = (tokens as string[]).map((t) => resolveSenderToken(t, now));
+  if (resolved.some((r) => r === null)) return { ok: false, reason: 'expired' };
+
+  const rows = resolved as SenderToken[];
+  // 発行時の session / agent group と一致しない行は、別セッション由来のものが
+  // 紛れ込んでいる。数に入れず断る。
+  if (rows.some((r) => r.session_id !== sessionId || r.agent_group_id !== agentGroupId)) {
+    return { ok: false, reason: 'unresolved' };
+  }
+
+  const userIds = new Set(rows.map((r) => r.user_id));
   if (userIds.size > 1) return { ok: false, reason: 'mixed-senders' };
 
-  return { ok: true, userId: resolved[0].user_id, token: resolved[0] };
+  return { ok: true, userId: rows[0].user_id, token: rows[0] };
 }
 
 /**
- * 処理中メッセージの content から senderToken を集める。
+ * 処理中のユーザー発話の content を集める。
  *
  * DB が無い / 壊れている場合は空配列。ここで throw すると CLI 要求そのものが
  * 落ちるが、返すべきは「依頼者が分からない」であって障害ではない。
  */
-function readProcessingTokens(agentGroupId: string, sessionId: string): string[] {
+function readProcessingUserMessages(agentGroupId: string, sessionId: string): string[] {
   let ids: string[];
   try {
     const outbound = openOutboundDb(outboundDbPath(agentGroupId, sessionId));
@@ -79,11 +96,15 @@ function readProcessingTokens(agentGroupId: string, sessionId: string): string[]
   try {
     const inbound = openInboundDb(inboundDbPath(agentGroupId, sessionId));
     try {
-      const placeholders = ids.map(() => '?').join(',');
+      const idPlaceholders = ids.map(() => '?').join(',');
+      const kindPlaceholders = USER_MESSAGE_KINDS.map(() => '?').join(',');
       const rows = inbound
-        .prepare(`SELECT content FROM messages_in WHERE id IN (${placeholders})`)
-        .all(...ids) as Array<{ content: string }>;
-      return rows.map((r) => extractToken(r.content)).filter((t): t is string => t !== null);
+        .prepare(
+          `SELECT content FROM messages_in
+            WHERE id IN (${idPlaceholders}) AND kind IN (${kindPlaceholders})`,
+        )
+        .all(...ids, ...USER_MESSAGE_KINDS) as Array<{ content: string }>;
+      return rows.map((r) => r.content);
     } finally {
       inbound.close();
     }
