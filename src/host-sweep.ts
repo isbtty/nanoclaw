@@ -164,6 +164,17 @@ async function sweep(): Promise<void> {
   }
   // MODULE-HOOK:approvals-reason-sweep:end
 
+  // Expired sender tokens (.deshi/adr/0020-sender-token.md). Central-DB delete,
+  // once per tick. Resolution already refuses expired rows, so this is purely
+  // to keep the table from growing without bound.
+  try {
+    const { sweepExpiredSenderTokens } = await import('./deshi/sender-token.js');
+    const removed = sweepExpiredSenderTokens();
+    if (removed > 0) log.debug('Expired sender tokens swept', { removed });
+  } catch (err) {
+    log.error('Sender token sweep failed', { err });
+  }
+
   setTimeout(sweep, SWEEP_INTERVAL_MS);
 }
 
