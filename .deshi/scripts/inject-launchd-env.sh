@@ -23,8 +23,12 @@
 #
 # 本スクリプト:
 #   `bash nanoclaw.sh` 後に手で 1 回走らせると、
-#   `.env` から `DESHI_DAEMON_URL` / `DESHI_DAEMON_DEVICE_SECRET` を読んで
-#   plist の EnvironmentVariables に plutil 経由で merge する。idempotent。
+#   `.env` から `BOSWELL_DAEMON_URL` / `BOSWELL_DAEMON_DEVICE_SECRET` (無ければ
+#   旧名の `DESHI_DAEMON_*`) を読んで plist の EnvironmentVariables に plutil
+#   経由で merge する。idempotent。
+#   plist に書き込むキー名は旧 `DESHI_DAEMON_*` のまま: TS 側の読み口
+#   (`src/deshi/daemon-env.ts`) が新旧どちらの名前でも解決するため、
+#   既存機の plist を書き換えずに済む。
 #   secret を書き込んだ場合は chmod 600 で他ユーザから保護。
 #   最後に launchctl bootout + bootstrap で reload。
 #
@@ -64,8 +68,8 @@ fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: $ENV_FILE not found" >&2
-  echo "  Create it with DESHI_DAEMON_URL and DESHI_DAEMON_DEVICE_SECRET" >&2
-  echo "  per the deshi-add-host-tools skill (deshi repo)." >&2
+  echo "  Create it with BOSWELL_DAEMON_URL and BOSWELL_DAEMON_DEVICE_SECRET" >&2
+  echo "  per the boswell-add-host-tools skill (deshi repo)." >&2
   exit 1
 fi
 
@@ -91,11 +95,20 @@ read_env_value() {
   ' "$ENV_FILE"
 }
 
-URL="$(read_env_value DESHI_DAEMON_URL || true)"
-SECRET="$(read_env_value DESHI_DAEMON_DEVICE_SECRET || true)"
+# ADR-0036 の deshi → boswell リネーム後、`/setup-boswell` skill は `.env` に
+# BOSWELL_DAEMON_* を書く。リネーム前にセットアップした機には旧 DESHI_DAEMON_*
+# しか無いので、新名を優先しつつ旧名も読む (isbtty/boswell#699)。
+URL="$(read_env_value BOSWELL_DAEMON_URL || true)"
+if [[ -z "$URL" ]]; then
+  URL="$(read_env_value DESHI_DAEMON_URL || true)"
+fi
+SECRET="$(read_env_value BOSWELL_DAEMON_DEVICE_SECRET || true)"
+if [[ -z "$SECRET" ]]; then
+  SECRET="$(read_env_value DESHI_DAEMON_DEVICE_SECRET || true)"
+fi
 
 if [[ -z "$URL" && -z "$SECRET" ]]; then
-  echo "ERROR: neither DESHI_DAEMON_URL nor DESHI_DAEMON_DEVICE_SECRET found in $ENV_FILE" >&2
+  echo "ERROR: no BOSWELL_DAEMON_URL / BOSWELL_DAEMON_DEVICE_SECRET (nor the legacy DESHI_* names) found in $ENV_FILE" >&2
   echo "  Nothing to inject." >&2
   exit 1
 fi
@@ -112,7 +125,7 @@ fi
 if [[ -n "$SECRET" ]]; then
   plutil -replace 'EnvironmentVariables.DESHI_DAEMON_DEVICE_SECRET' -string "$SECRET" "$PLIST"
   echo "  set EnvironmentVariables.DESHI_DAEMON_DEVICE_SECRET"
-  # 秘密が入ったので 600 に絞る (deshi-add-host-tools skill の host-tools plist
+  # 秘密が入ったので 600 に絞る (boswell-add-host-tools skill の host-tools plist
   # と同じ convention)。
   chmod 600 "$PLIST"
 fi

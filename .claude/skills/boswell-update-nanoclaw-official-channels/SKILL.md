@@ -1,16 +1,16 @@
 ---
-name: deshi-update-nanoclaw-official-channels
+name: boswell-update-nanoclaw-official-channels
 description: isbtty/nanoclaw の upstream/channels アダプタ群を `installed` 配列に基づいて check / update / reinstall する運用 Skill。
 argument-hint: check | update | reinstall
 ---
 
-# /deshi-update-nanoclaw-official-channels
+# /boswell-update-nanoclaw-official-channels
 
 ## About
 
 このSkillは、`isbtty/nanoclaw` に取り込み済みの **upstream の公式 channel adapter** 群を、上流 `nanocoai/nanoclaw` の `channels` branch から同期するための運用Skillです。
 
-nanoclaw 本体(host + agent-runner + schema)の更新は `/deshi-update-from-upstream` の責務であり、本Skillは **channels branch のみ** を対象とします。両者は分離されており、`/deshi-update-from-upstream` が main を先に取り込んだ後、本Skillが内部から自動呼出される設計です。
+nanoclaw 本体(host + agent-runner + schema)の更新は `/boswell-update-from-upstream` の責務であり、本Skillは **channels branch のみ** を対象とします。両者は分離されており、`/boswell-update-from-upstream` が main を先に取り込んだ後、本Skillが内部から自動呼出される設計です。
 
 本Skillは **3つのモード**(`check` / `update` / `reinstall`)を持ち、いずれも `.deshi/upstream-versions.json` の `upstream.channels.installed` 配列を**唯一の真実**として動作します。配列にない channel は upstream/channels に存在していても触りません(自動検出に頼らず、取込みは常に人間の意図を経由する方針)。
 
@@ -21,7 +21,7 @@ nanoclaw 本体(host + agent-runner + schema)の更新は `/deshi-update-from-up
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ nanocoai/nanoclaw (upstream)                                │
-│   ├── main branch       ── /deshi-update-from-upstream の対象│
+│   ├── main branch       ── /boswell-update-from-upstream の対象│
 │   └── channels branch   ── 本Skill の対象                   │
 └─────────────────────────────────────────────────────────────┘
                             │
@@ -68,7 +68,7 @@ nanoclaw 本体(host + agent-runner + schema)の更新は `/deshi-update-from-up
 1. **ソースファイル改変は `.deshi/scripts/install-official-channels.sh` に集約する。** Claude が直接 `git show <ref>:path > dest` や `cp` で channel ファイルを書き換えてはいけない。スクリプト経由でのみ行う。
 2. **`upstream.channels.installed` 配列が真実。** ここにない channel は upstream/channels に存在しても触らない。`src/channels/` に既にあっても、配列にない場合は本Skillの対象外。
 3. **`installed` 配列の編集は人間の判断。** 新channel追加や廃止判断を本Skill が自動で行ってはいけない。Skill は通知するのみ。
-4. **`upstream.main.sha` は `upstream/channels` の祖先である前提。** isbtty/nanoclaw は `merge-base(upstream/main, upstream/channels)` (共通祖先) を base ref に取る運用 (ADR-0008)。本Skillは `upstream.main.sha` が `upstream/channels` の祖先であることを sanity check するのみで、ここを「channels が main を追従しているか」のチェックには使わない。`/deshi-update-from-upstream` を先に走らせる前提。
+4. **`upstream.main.sha` は `upstream/channels` の祖先である前提。** isbtty/nanoclaw は `merge-base(upstream/main, upstream/channels)` (共通祖先) を base ref に取る運用 (ADR-0008)。本Skillは `upstream.main.sha` が `upstream/channels` の祖先であることを sanity check するのみで、ここを「channels が main を追従しているか」のチェックには使わない。`/boswell-update-from-upstream` を先に走らせる前提。
 5. **commit は1本にまとめる。** channel ごとに commit を切らない。
 6. **reinstall は冪等。** 同じ記録 SHA に対して何度実行しても同じ結果になる。
 
@@ -117,7 +117,7 @@ URL が `nanocoai/nanoclaw` を指していなければ abort。`origin` では�
 
 ファイルが存在し、`upstream.channels.installed` 配列が読めることを確認。読めなければ abort。
 
-> ".deshi/upstream-versions.json is missing or malformed. Run /deshi-update-from-upstream first to initialize."
+> ".deshi/upstream-versions.json is missing or malformed. Run /boswell-update-from-upstream first to initialize."
 
 ### 1-4. `upstream.main.sha` の ancestor sanity check
 
@@ -130,9 +130,9 @@ CHAN_SHA=$(git rev-parse upstream/channels)
 git merge-base --is-ancestor "$RECORDED_MAIN_SHA" "$CHAN_SHA"
 ```
 
-exit code が 0 でなければ `.deshi/upstream-versions.json` が壊れているか、`/deshi-update-from-upstream` が `--target` で channels の祖先でない ref を取り込んでしまった状態です。channel 取り込みに進めないため abort します。
+exit code が 0 でなければ `.deshi/upstream-versions.json` が壊れているか、`/boswell-update-from-upstream` が `--target` で channels の祖先でない ref を取り込んでしまった状態です。channel 取り込みに進めないため abort します。
 
-> "upstream.main.sha is not an ancestor of upstream/channels — versions.json may be inconsistent. Re-run /deshi-update-from-upstream (default = merge-base) first."
+> "upstream.main.sha is not an ancestor of upstream/channels — versions.json may be inconsistent. Re-run /boswell-update-from-upstream (default = merge-base) first."
 
 加えて、`upstream.main.policy` が `"merge-base"` の場合は、`RECORDED_MAIN_SHA` が現時点の `merge-base(upstream/main, upstream/channels)` と一致するかを警告チェックします (一致しなければ「upstream の HEAD が動いて共通祖先が前進している」状態。warn のみ、abort はしない):
 
@@ -141,7 +141,7 @@ RECORDED_POLICY=$(jq -r '.upstream.main.policy // "legacy"' .deshi/upstream-vers
 if [ "$RECORDED_POLICY" = "merge-base" ]; then
   CURRENT_BASE=$(git merge-base upstream/main upstream/channels)
   if [ "$RECORDED_MAIN_SHA" != "$CURRENT_BASE" ]; then
-    echo "WARN: recorded merge-base ($RECORDED_MAIN_SHA) differs from current ($CURRENT_BASE). Consider running /deshi-update-from-upstream."
+    echo "WARN: recorded merge-base ($RECORDED_MAIN_SHA) differs from current ($CURRENT_BASE). Consider running /boswell-update-from-upstream."
   fi
 fi
 ```
@@ -191,7 +191,7 @@ New channels available upstream (not in `installed`):
   - <その他>
 
 To adopt one, edit .deshi/upstream-versions.json `upstream.channels.installed`
-manually and run /deshi-update-nanoclaw-official-channels update.
+manually and run /boswell-update-nanoclaw-official-channels update.
 ```
 
 #### (c) 廃止検知(installed にあるが upstream に消えた)
@@ -240,7 +240,7 @@ pnpm install
 ```
 WARNING: pending due to pnpm minimumReleaseAge:
   - @chat-adapter/slack@1.4.2 (released < 3 days ago)
-This channel will be retried at the next /deshi-update-nanoclaw-official-channels update.
+This channel will be retried at the next /boswell-update-nanoclaw-official-channels update.
 ```
 
 旧スキーマには `pending-<version>` マーク用のフィールドがありましたが、新スキーマでは記録場所がありません(adapter version は `package.json` が真実)。代わりに **commit メッセージに pending channel 名を明記**することで、次回追従時の再試行を人間が判断できるようにします。
@@ -262,7 +262,7 @@ cd container/agent-runner && bun install && bun test && cd -
 - `upstream.channels.sha` ← `git rev-parse upstream/channels`
 - `upstream.channels.lastSyncedAt` ← 現在時刻(ISO8601, ローカルTZ)
 
-`installed` 配列は触りません(人間の判断のみ)。`upstream.main.*` も触りません(これは `/deshi-update-from-upstream` の責務)。
+`installed` 配列は触りません(人間の判断のみ)。`upstream.main.*` も触りません(これは `/boswell-update-from-upstream` の責務)。
 
 #### 2-B-6. commit(1本)
 
@@ -282,7 +282,7 @@ EOF
 
 pending がない場合は "Pending: none" と書きます。pending 行を必ず含めることで、次回追従担当(人間 or Claude)がログを見れば再試行対象を把握できます。
 
-branch 作成・push・PR 作成はこのSkillの責務外です。呼び出し側(典型的には `/deshi-update-from-upstream` か手動運用)が担います。
+branch 作成・push・PR 作成はこのSkillの責務外です。呼び出し側(典型的には `/boswell-update-from-upstream` か手動運用)が担います。
 
 ### 2-C. reinstall モード
 
@@ -343,9 +343,9 @@ pnpm install --frozen-lockfile
 
 | Skill | 対象 | 関係 |
 |---|---|---|
-| `/deshi-update-nanoclaw-official-channels`(本Skill) | upstream/channels の adapter | `installed` 配列に明示された channel のみ |
-| `/deshi-update-from-upstream` | upstream/main(host + agent-runner + schema) | 任意のタイミング、本Skill を内部で自動呼出 |
+| `/boswell-update-nanoclaw-official-channels`(本Skill) | upstream/channels の adapter | `installed` 配列に明示された channel のみ |
+| `/boswell-update-from-upstream` | upstream/main(host + agent-runner + schema) | 任意のタイミング、本Skill を内部で自動呼出 |
 
-**順序原則:** `/deshi-update-from-upstream` を先に走らせて共通祖先 (`merge-base(upstream/main, upstream/channels)`) を `upstream.main.sha` に書き込み、その後に本Skillで channels を同期します。逆順だと Step 1-4 の sanity check で abort することがあります(意図した安全弁、ADR-0008)。
+**順序原則:** `/boswell-update-from-upstream` を先に走らせて共通祖先 (`merge-base(upstream/main, upstream/channels)`) を `upstream.main.sha` に書き込み、その後に本Skillで channels を同期します。逆順だと Step 1-4 の sanity check で abort することがあります(意図した安全弁、ADR-0008)。
 
-`/deshi-update-from-upstream` は内部から本Skillを `update` モードで自動呼出します。手動で本Skillを単独実行するのは、check モードで状況を確認する場合などです。
+`/boswell-update-from-upstream` は内部から本Skillを `update` モードで自動呼出します。手動で本Skillを単独実行するのは、check モードで状況を確認する場合などです。

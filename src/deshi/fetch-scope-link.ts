@@ -1,4 +1,4 @@
-import { readEnvFile } from '../env.js';
+import { MISSING_SECRET_MESSAGE, resolveDaemonEnvWithDotenv } from './daemon-env.js';
 
 /**
  * Mint a one-time knowledge-scope setup link from the deshi daemon's
@@ -16,12 +16,9 @@ import { readEnvFile } from '../env.js';
  * from channelContext), i.e. `${messagingGroup.channel_type}:${messagingGroup.platform_id}`.
  *
  * Auth + env resolution mirror {@link fetchDeshiDelegationFragment}: Bearer
- * `<secret>:nanoclaw`, `process.env` first then a `.env` fallback via
- * `readEnvFile` (the launchd-spawned host process does not inherit the shell
- * env, so the secret may live only in `.env`).
+ * `<secret>:nanoclaw`, with key/source precedence owned by
+ * `resolveDaemonEnvWithDotenv` (see `daemon-env.ts`).
  */
-
-const DEFAULT_DAEMON_URL = 'http://localhost:3100';
 
 export interface ScopeLink {
   url: string;
@@ -29,11 +26,9 @@ export interface ScopeLink {
 }
 
 export async function fetchDeshiScopeLink(channelId: string, opts: { signal?: AbortSignal } = {}): Promise<ScopeLink> {
-  const envConfig = readEnvFile(['DESHI_DAEMON_URL', 'DESHI_DAEMON_DEVICE_SECRET']);
-  const url = process.env.DESHI_DAEMON_URL || envConfig.DESHI_DAEMON_URL || DEFAULT_DAEMON_URL;
-  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET || envConfig.DESHI_DAEMON_DEVICE_SECRET;
+  const { url, secret } = resolveDaemonEnvWithDotenv();
   if (!secret) {
-    throw new Error('DESHI_DAEMON_DEVICE_SECRET is not set on host');
+    throw new Error(`${MISSING_SECRET_MESSAGE} on host`);
   }
 
   const res = await fetch(`${url}/knowledge/scope-link`, {

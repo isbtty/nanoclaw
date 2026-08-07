@@ -1,11 +1,11 @@
 ---
-name: deshi-manage-nanoclaw-admins
+name: boswell-manage-nanoclaw-admins
 description: nanoclaw の承認権限を持つ管理者(グローバル admin)を増減する運用スキル。list / grant / revoke を ncl roles でラップ。承認申請を owner 以外にも分散対応させるための権限側の配線 (project)
 user-invocable: true
 allowed-tools: Bash, Read, AskUserQuestion
 ---
 
-# `/deshi-manage-nanoclaw-admins` — 承認できる管理者の管理
+# `/boswell-manage-nanoclaw-admins` — 承認できる管理者の管理
 
 ## 概要
 
@@ -13,7 +13,7 @@ allowed-tools: Bash, Read, AskUserQuestion
 増やすための**権限管理**スキル。**グローバル admin**（`agent_group_id=NULL`、全 group 横断）を
 `grant` / `list` / `revoke` する。
 
-`/deshi-route-approvals-to-channel`（**どこに**カードを出すか）とは責務が別で、こちらは
+`/boswell-route-approvals-to-channel`（**どこに**カードを出すか）とは責務が別で、こちらは
 **誰が**承認できるか。共有チャンネルにカードを出しても押せるのは owner/admin だけなので、
 分散対応にはまず admin 付与が要る。
 
@@ -77,12 +77,12 @@ ncl roles revoke --user slack:U01ABCDEF --role admin
 
 ## 運用フロー（2 スキルの組み合わせ）
 
-1. `/deshi-manage-nanoclaw-admins grant` … 共同対応する人を admin 化
-2. `/deshi-route-approvals-to-channel` … 通知先を共有 Slack チャンネルに配線
+1. `/boswell-manage-nanoclaw-admins grant` … 共同対応する人を admin 化
+2. `/boswell-route-approvals-to-channel` … 通知先を共有 Slack チャンネルに配線
 3. 以後、許可申請は共有チャンネルに1枚 → owner/admin の誰かが押して承認
 
 ## 関連
 
-- 通知先の配線（どこに出すか）: `/deshi-route-approvals-to-channel`
+- 通知先の配線（どこに出すか）: `/boswell-route-approvals-to-channel`
 - 承認者の列挙順: `pickApprover`（`src/modules/approvals/primitive.ts` — scoped→global→owner）
 - 設計: isbtty/deshi#517

@@ -9,7 +9,7 @@
  * host-tools-server 側で完結する (案 B、isbtty/deshi#199 工程 5)。
  *
  * deshi daemon の `GET /jobs/:jobId` には auto-auth が通らないため、
- * `DESHI_DAEMON_DEVICE_SECRET` 環境変数の Bearer を必須とする。
+ * `BOSWELL_DAEMON_DEVICE_SECRET` (旧名 `DESHI_DAEMON_DEVICE_SECRET` も可) の Bearer を必須とする。
  *
  * 中間 ack の構造配信 (isbtty/deshi#423):
  *   job が `DESHI_RUN_ACK_THRESHOLD_MS` (default 8s) を超えても pending の
@@ -19,6 +19,7 @@
  *   prompt 依存だった中間返信を LLM 非依存で保証するための構造対応。
  */
 
+import { MISSING_SECRET_MESSAGE, resolveDaemonEnv } from '../daemon-env.js';
 import { forgetJob, getJobAck } from '../ack-cache.js';
 import { postDeshiRunAck, type DeshiAckChannelContext } from '../post-deshi-ack.js';
 
@@ -88,10 +89,9 @@ export async function daemonPollUntilDoneHandler(body: unknown): Promise<DaemonP
     throw new Error('daemonPollUntilDone: jobId is required');
   }
 
-  const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
-  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET;
+  const { url: deshiUrl, secret } = resolveDaemonEnv();
   if (!secret) {
-    throw new Error('DESHI_DAEMON_DEVICE_SECRET is not set on host-tools-server');
+    throw new Error(`${MISSING_SECRET_MESSAGE} on host-tools-server`);
   }
 
   const timeoutMs = req.timeoutMs ?? DEFAULT_TIMEOUT_MS;

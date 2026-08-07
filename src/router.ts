@@ -474,7 +474,7 @@ async function deliverToAgent(
   // Filtered commands are dropped silently. Denied admin commands get a
   // permission-denied response written directly to messages_out.
   if (event.message.kind === 'chat' || event.message.kind === 'chat-sdk') {
-    // On-demand knowledge-scope edit-link command (deshi-update-knowledge-scope).
+    // On-demand knowledge-scope edit-link command (boswell-update-knowledge-scope).
     // Owner-gated; a handled command is answered directly and never reaches the
     // container / deshi passthrough.
     const scopeHandled = await handleKnowledgeScopeCommand({

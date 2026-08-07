@@ -16,10 +16,13 @@ describe('daemonRunSkillHandler', () => {
   const originalUrl = process.env.DESHI_DAEMON_URL;
 
   beforeEach(() => {
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) {
       delete process.env.DESHI_DAEMON_URL;
@@ -56,7 +59,7 @@ describe('daemonRunSkillHandler', () => {
     expect(headers['Authorization']).toBeUndefined();
   });
 
-  it('skill 名つきの自由文 ("/deshi-sync --full") もそのまま渡す', async () => {
+  it('skill 名つきの自由文 ("/boswell-sync --full") もそのまま渡す', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ jobId: 'JOB2', threadId: 'T2' }),
@@ -64,11 +67,11 @@ describe('daemonRunSkillHandler', () => {
     } as unknown as Response);
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    await daemonRunSkillHandler({ ...validBody, input: '/deshi-sync --full' });
+    await daemonRunSkillHandler({ ...validBody, input: '/boswell-sync --full' });
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const body = JSON.parse(init.body as string) as { input: string };
-    expect(body.input).toBe('/deshi-sync --full');
+    expect(body.input).toBe('/boswell-sync --full');
   });
 
   it('DESHI_DAEMON_URL で daemon URL を差し替えできる', async () => {

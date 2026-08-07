@@ -16,10 +16,13 @@ describe('fetchDeshiScopeLink', () => {
   beforeEach(() => {
     readEnvFileMock.mockReturnValue({});
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) {
       delete process.env.DESHI_DAEMON_URL;
@@ -71,7 +74,9 @@ describe('fetchDeshiScopeLink', () => {
 
   it('DESHI_DAEMON_DEVICE_SECRET が未設定なら throw する', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
-    await expect(fetchDeshiScopeLink('line:U1')).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
+    await expect(fetchDeshiScopeLink('line:U1')).rejects.toThrow(
+      /BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/,
+    );
   });
 
   it('process.env に secret が無くても .env fallback から拾う (launchd plist に env が無いケース)', async () => {

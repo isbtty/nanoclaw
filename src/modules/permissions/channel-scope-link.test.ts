@@ -52,8 +52,8 @@ describe('maybeDeliverScopeLink', () => {
     vi.clearAllMocks();
   });
 
-  it('deshi-backed group: keys the link by platform_id (no channel double-prefix) and DMs the approver the url', async () => {
-    getContainerConfigMock.mockReturnValue(configWith({ deshi: { instructions: 'x' } }));
+  it('boswell-backed group: keys the link by platform_id (no channel double-prefix) and DMs the approver the url', async () => {
+    getContainerConfigMock.mockReturnValue(configWith({ boswell: { instructions: 'x' } }));
 
     await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toEqual({ ok: true });
 
@@ -74,7 +74,14 @@ describe('maybeDeliverScopeLink', () => {
     expect(text).not.toContain('`');
   });
 
-  it('non-deshi group: skips entirely (no daemon call, no DM), returns not-deshi', async () => {
+  it('legacy deshi-keyed group (pre-019): still gated in via the deshi fallback', async () => {
+    getContainerConfigMock.mockReturnValue(configWith({ deshi: { instructions: 'x' } }));
+
+    await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toEqual({ ok: true });
+    expect(fetchScopeLinkMock).toHaveBeenCalledWith('telegram:-5146234415');
+  });
+
+  it('non-boswell group: skips entirely (no daemon call, no DM), returns not-deshi', async () => {
     getContainerConfigMock.mockReturnValue(configWith({ gmail: {} }));
 
     await expect(maybeDeliverScopeLink('ag-1', 'mg-1', 'line:Uapprover')).resolves.toEqual({

@@ -1,5 +1,5 @@
 /**
- * deshi#517 — `/deshi-route-approvals-to-channel` skill が実機（Mac mini host）で
+ * deshi#517 — `/boswell-route-approvals-to-channel` skill が実機（Mac mini host）で
  * 起動する CLI エントリ。central DB (`data/v2.db`) を開いて
  * {@link routeApprovalsToChannel} を実行し、結果を表示する。
  *

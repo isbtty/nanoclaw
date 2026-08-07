@@ -15,6 +15,8 @@ describe('daemonSendFileToChatHandler', () => {
 
   beforeEach(() => {
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
     vi.mocked(skillExecutionNotificationsHandler).mockReset();
     vi.mocked(skillExecutionNotificationsHandler).mockResolvedValue({
@@ -25,6 +27,7 @@ describe('daemonSendFileToChatHandler', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) delete process.env.DESHI_DAEMON_URL;
     else process.env.DESHI_DAEMON_URL = originalUrl;
@@ -281,7 +284,7 @@ describe('daemonSendFileToChatHandler', () => {
   it('DESHI_DAEMON_DEVICE_SECRET 未設定なら throw', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
     await expect(daemonSendFileToChatHandler({ path: 'x.html', channelContext })).rejects.toThrow(
-      /DESHI_DAEMON_DEVICE_SECRET is not set/,
+      /BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/,
     );
   });
 
