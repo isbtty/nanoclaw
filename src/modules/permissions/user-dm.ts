@@ -33,6 +33,7 @@
  * safe — worst case we round-trip redundantly.
  */
 import { getChannelAdapter } from '../../channels/channel-registry.js';
+import { resolveApprovalsChannelOverride } from '../../deshi/approvals-channel/resolve-override.js';
 import { getMessagingGroup, getMessagingGroupByPlatform, createMessagingGroup } from '../../db/messaging-groups.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, User } from '../../types.js';
@@ -61,6 +62,10 @@ export async function ensureUserDm(userId: string): Promise<MessagingGroup | nul
     log.warn('ensureUserDm: user id not namespaced', { userId });
     return null;
   }
+
+  // deshi: 承認通知の共有チャンネル配線（配信時のライブ判定）。未配線なら no-op。
+  const override = resolveApprovalsChannelOverride(userId, channelType);
+  if (override) return override;
 
   // Cache hit: existing user_dms row → load and return the messaging_group.
   const cached = getUserDm(userId, channelType);

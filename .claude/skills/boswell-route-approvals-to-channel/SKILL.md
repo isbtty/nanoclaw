@@ -1,6 +1,6 @@
 ---
 name: boswell-route-approvals-to-channel
-description: 承認/許可通知(未知sender・channel招待・知識スコープ編集リンク)を owner/admin 個人 DM ではなく共有 Slack チャンネルに集約する配線スキル。user_dms リダイレクト方式でコア非改修。owner/admin が同じチャンネルで共同承認できるようにする (project)
+description: 承認/許可通知(未知sender・channel招待・知識スコープ編集リンク)を owner/admin 個人 DM ではなく共有 Slack チャンネルに集約する配線スキル。配信時に user_roles を引き直すライブ判定方式。owner/admin が同じチャンネルで共同承認できるようにする (project)
 user-invocable: true
 allowed-tools: Bash, Read, AskUserQuestion
 ---
@@ -13,25 +13,29 @@ allowed-tools: Bash, Read, AskUserQuestion
 owner/admin **個人の DM** ではなく **共有 Slack チャンネル**に出す。owner と admin が
 同じチャンネルで手の空いた人が承認ボタンを押して**共同対応**できるようにする。
 
-**コア非改修**（案D: `user_dms` リダイレクト、deshi#517）。upstream 追従コンフリクト無し。
+### 仕組み
 
-### 仕組み（1 行）
+配線は `deshi_approvals_channel` テーブルに**設定として 1 行**書くだけ。実際の振り替えは
+配信のたびに `resolve-override.ts` が `user_roles` を引き直して行う（`ensureUserDm` 冒頭）。
 
-owner/admin の `user_dms` 行を共有チャンネルの messaging_group に向けるだけ。host の
-`ensureUserDm(approver)` はキャッシュを `is_group` 無検証で返すのでカードがそのチャンネルに
-出る。承認ボタンは `hasAdminPrivilege` で認可されるので誰が押しても通る。
+**配線と grant の順序は問わない。** 配線後に admin を付与した人にも自動的に効き、revoke
+すれば自動的に個人 DM 解決へ戻る（boswell#712。旧方式は配線時点の owner/admin にしか
+効かないスナップショットで、後から付与した admin のカードが個人 DM に埋もれる事故を起こした）。
+
+承認ボタンは `hasAdminPrivilege` で認可されるので、チャンネルにいる admin なら誰が押しても通る。
 
 ### 前提
 
-- **admin 権限の付与が先**（チャンネルに出ても押せるのは owner/admin だけ）。
-  未付与なら先に `/boswell-manage-nanoclaw-admins grant` で admin を揃える。
-- Slack channel が導入済み（`/add-slack` 済み）。deshi#517 は **Slack 単一が前提**。
+- Slack channel が導入済み（`/add-slack` 済み）。**Slack 単一が前提**（1 channel_type = 1 共有チャンネル）。
 - このスキルは **nanoclaw host 上（Mac mini）で operator が実行**する。
+- admin の付与はいつでもよい（先でも後でも）。`/boswell-manage-nanoclaw-admins grant` を使う。
 
 ### ⚠️ トレードオフ（実行前に owner に一言）
 
-知識スコープ編集リンク（HMAC・1回限り・`channel-scope-link.ts`）も同じ `user_dms` 経由
-なので、**このリンクも共有チャンネルに出る**。チャンネル参加者の誰でも先に踏める。
+承認カードだけでなく、**approver 宛の host 起点通知すべて**が共有チャンネルに出る:
+知識スコープ編集リンク（HMAC・1回限り・`channel-scope-link.ts`）/ チャンネル登録の完了通知 /
+reject 理由の入力プロンプト。特に編集リンクは**チャンネル参加者の誰でも先に踏める**。
+しかも**今後 admin を付与した人すべてに効く**ので、参加者の管理はより重要になる。
 → **「owner/admin だけの Slack チャンネル」**であることを必ず確認してから配線する。
 
 配線ヘルパは作成する共有 mg に `denied_at` を立てて、router の channel 登録
@@ -41,6 +45,18 @@ escalation（`agentCount===0 && isMention`）を殺す。よってこのチャ�
 ID を渡すと承認カードがそこに混ざる）。
 
 ## 手順
+
+### 0. 配線済みかを先に確認する（再配線はここで終わる）
+
+```bash
+pnpm exec tsx src/deshi/approvals-channel/run.ts
+```
+
+引数なしは**配線済みチャンネルへの再配線**。チャンネル ID を調べ直す必要は無い。
+配線済みなら旧スナップショットの掃除と現状表示までこれ 1 回で終わるので、**手順 2 へ飛ぶ**
+（表示の見方は手順 2 と同じ）。
+
+`まだ配線されていません` と出た場合だけ、手順 1 に進んでチャンネル ID を用意する。
 
 ### 1. 共有チャンネルを用意して channel ID を取る
 
@@ -67,20 +83,23 @@ owner に「owner/admin だけが入る Slack チャンネル」を作っても�
 pnpm exec tsx src/deshi/approvals-channel/run.ts C01ABCDEF --name "承認"
 ```
 
+配線先を**別のチャンネルに変える**場合も同じコマンド（新しい ID を渡す）。
+
 出力で以下を確認:
 - `messaging_group_id ... (新規作成 / 既存を再利用)`
-- `redirected (N) : slack:Uxxx, ...` ← owner/admin が共有チャンネルに向いた
-- `skipped (...)` ← slack identity でない owner/admin（Slack 単一運用では通常空）
-- 末尾の `--- 現在の user_dms ---` で各 approver が `[GROUP <CHANNEL_ID>]` を指しているか
-
-`redirected` が空なら → owner/admin に `slack:Uxxx` identity が無い。
-`/boswell-manage-nanoclaw-admins grant` で slack identity 付きの admin を用意してから再実行。
+- `掃除した user_dms : N 行` ← 旧スナップショット方式の残骸（初回配線なら 0）
+- `配線レコード : deshi_approvals_channel(slack) → mg-...` ← 設定が保存された
+- `現時点の対象 (N) : slack:Uxxx, ...` ← **参考値**。実際の対象は配信のたびに判定されるので、
+  この後に admin を付与した人も自動的に共有チャンネルに出る
+- 末尾の user_dms 一覧に `⚠️ 共有 mg を指したまま` が出ていないこと（出たら掃除漏れ）
 
 ### 3. 実機検証（ゴール基準）
 
 - [ ] 未登録 sender を Slack から発生させ、**承認カードが共有チャンネルに1枚出る**
 - [ ] owner でない admin がボタンを押して**承認が通る**（`hasAdminPrivilege`）
 - [ ] 承認後、対象 sender が `agent_group_members` に追加され再ルートされる
+- [ ] **配線の後に admin を 1 名 grant** し、その人が先頭 approver になってもカードが
+      共有チャンネルに出る（boswell#712 の回帰確認）
 - [ ] **普通の DM 会話は従来通り**（別ユーザーで DM して応答が元 DM に返る）
 
 ## ロールバック
@@ -88,15 +107,17 @@ pnpm exec tsx src/deshi/approvals-channel/run.ts C01ABCDEF --name "承認"
 共有チャンネルへの配線を解除して個人 DM に戻す:
 
 ```bash
-# 該当 approver の user_dms 行を削除 → 次回 ensureUserDm が openDM で個人DMを再解決する
-pnpm exec tsx scripts/q.ts data/v2.db \
-  "DELETE FROM user_dms WHERE channel_type='slack' AND messaging_group_id='<共有MG_ID>'"
+pnpm exec tsx src/deshi/approvals-channel/run.ts --clear
 ```
 
+設定行を消すだけで override は即座に効かなくなり、以降のカードは個人 DM に戻る
+（`user_dms` は配線時に掃除済みなので、次回の cold DM で個人 DM が解決し直される）。
 共有チャンネルの messaging_group 行は残しても無害（参照されなくなるだけ）。
 
 ## 関連
 
 - 配線ヘルパ: `src/deshi/approvals-channel/wire.ts` / CLI: `run.ts`
+- 配信時のライブ判定: `src/deshi/approvals-channel/resolve-override.ts`
 - 権限管理（誰が承認できるか）: `/boswell-manage-nanoclaw-admins`
-- 設計: isbtty/deshi#517
+- 設計: isbtty/deshi#517（初版）, isbtty/boswell#712（ライブ判定への移行）
+- ADR-0019（deshi 所有テーブルと `ensureUserDm` 侵襲の例外）

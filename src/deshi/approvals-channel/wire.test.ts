@@ -1,14 +1,15 @@
 /**
- * deshi#517 — routeApprovalsToChannel（案D 配線ヘルパ）のテスト。
+ * deshi#517 / boswell#712 — routeApprovalsToChannel（配線ヘルパ）のテスト。
  */
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../../db/index.js';
 import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
-import { getUserDm } from '../../modules/permissions/db/user-dms.js';
+import { getUserDm, upsertUserDm } from '../../modules/permissions/db/user-dms.js';
 import { createUser } from '../../modules/permissions/db/users.js';
 import { grantRole } from '../../modules/permissions/db/user-roles.js';
-import { routeApprovalsToChannel } from './wire.js';
+import { getApprovalsChannel } from './db.js';
+import { clearApprovalsChannelWiring, routeApprovalsToChannel } from './wire.js';
 
 function now(): string {
   return new Date().toISOString();
@@ -83,9 +84,9 @@ describe('routeApprovalsToChannel', () => {
 
     expect(second.created).toBe(false);
     expect(second.messagingGroupId).toBe(first.messagingGroupId);
-    // mg は 1 本、user_dms も 1 行に収束する。
+    // mg は 1 本に収束し、配線も 1 行だけ。
     expect(getMessagingGroupByPlatform('slack', 'slack:C0SHARED')).toBeDefined();
-    expect(getUserDm('slack:UOWNER', 'slack')?.messaging_group_id).toBe(first.messagingGroupId);
+    expect(getApprovalsChannel('slack')?.messaging_group_id).toBe(first.messagingGroupId);
   });
 
   it('reports a leftover prefix-less messaging_group as legacy (deshi#528 migration)', () => {
@@ -108,18 +109,18 @@ describe('routeApprovalsToChannel', () => {
     expect(res.messagingGroupId).not.toBe('mg-broken');
     expect(res.legacyMessagingGroupId).toBe('mg-broken');
     expect(getMessagingGroup('mg-broken')).toBeDefined();
-    // user_dms は正規 mg に向く。
-    expect(getUserDm('slack:UOWNER', 'slack')?.messaging_group_id).toBe(res.messagingGroupId);
+    // 配線は正規 mg に向く。
+    expect(getApprovalsChannel('slack')?.messaging_group_id).toBe(res.messagingGroupId);
   });
 
-  it('dedupes a user who is both owner and global admin (redirected once)', () => {
+  it('dedupes a user who is both owner and global admin (listed once in eligibleNow)', () => {
     seedUser('slack:UDUAL', 'slack');
     grantRole({ user_id: 'slack:UDUAL', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
     grantRole({ user_id: 'slack:UDUAL', role: 'admin', agent_group_id: null, granted_by: null, granted_at: now() });
 
     const res = routeApprovalsToChannel({ platformId: 'C0SHARED' });
 
-    expect(res.redirected).toEqual(['slack:UDUAL']);
+    expect(res.eligibleNow).toEqual(['slack:UDUAL']);
   });
 
   it('does not mutate a pre-existing external messaging_group when reusing it', () => {
@@ -146,26 +147,77 @@ describe('routeApprovalsToChannel', () => {
     expect(mg?.denied_at).toBeFalsy();
   });
 
-  it('redirects owner and global-admin slack user_dms to the shared channel', () => {
+  it('stores the wiring and writes nothing to user_dms (boswell#712)', () => {
     seedOwner('slack:UOWNER');
     seedGlobalAdmin('slack:UADMIN');
 
     const res = routeApprovalsToChannel({ platformId: 'C0SHARED' });
 
-    expect(res.redirected.sort()).toEqual(['slack:UADMIN', 'slack:UOWNER']);
-    expect(getUserDm('slack:UOWNER', 'slack')?.messaging_group_id).toBe(res.messagingGroupId);
-    expect(getUserDm('slack:UADMIN', 'slack')?.messaging_group_id).toBe(res.messagingGroupId);
+    expect(getApprovalsChannel('slack')?.messaging_group_id).toBe(res.messagingGroupId);
+    // 旧方式と違い user_dms は触らない（cold-DM キャッシュのまま）。
+    expect(getUserDm('slack:UOWNER', 'slack')).toBeUndefined();
+    expect(getUserDm('slack:UADMIN', 'slack')).toBeUndefined();
+    // 参考値としては両名が出る。
+    expect(res.eligibleNow.sort()).toEqual(['slack:UADMIN', 'slack:UOWNER']);
   });
 
-  it('skips owner/admin whose identity is not the target channel_type', () => {
+  it('clears leftover snapshot rows pointing at the shared mg (rollback would break otherwise)', () => {
+    seedOwner('slack:UOWNER');
+    const first = routeApprovalsToChannel({ platformId: 'C0SHARED' });
+    // 旧方式が書いた残骸を再現する。
+    upsertUserDm({
+      user_id: 'slack:UOWNER',
+      channel_type: 'slack',
+      messaging_group_id: first.messagingGroupId,
+      resolved_at: now(),
+    });
+
+    const second = routeApprovalsToChannel({ platformId: 'C0SHARED' });
+
+    expect(second.clearedSnapshotRows).toBe(1);
+    expect(getUserDm('slack:UOWNER', 'slack')).toBeUndefined();
+  });
+
+  it('leaves unrelated user_dms rows alone', () => {
+    seedOwner('slack:UOWNER');
+    createMessagingGroup({
+      id: 'mg-personal',
+      channel_type: 'slack',
+      platform_id: 'slack:D0PERSONAL',
+      name: null,
+      is_group: 0,
+      unknown_sender_policy: 'strict',
+      created_at: now(),
+    });
+    upsertUserDm({
+      user_id: 'slack:UOWNER',
+      channel_type: 'slack',
+      messaging_group_id: 'mg-personal',
+      resolved_at: now(),
+    });
+
+    const res = routeApprovalsToChannel({ platformId: 'C0SHARED' });
+
+    expect(res.clearedSnapshotRows).toBe(0);
+    expect(getUserDm('slack:UOWNER', 'slack')?.messaging_group_id).toBe('mg-personal');
+  });
+
+  it('clearApprovalsChannelWiring removes the wiring', () => {
+    seedOwner('slack:UOWNER');
+    routeApprovalsToChannel({ platformId: 'C0SHARED' });
+
+    clearApprovalsChannelWiring();
+
+    expect(getApprovalsChannel('slack')).toBeUndefined();
+  });
+
+  it('omits owner/admin whose identity is not the target channel_type from eligibleNow', () => {
     seedOwner('slack:UOWNER');
     seedGlobalAdmin('telegram:12345', 'telegram');
 
     const res = routeApprovalsToChannel({ platformId: 'C0SHARED' });
 
-    expect(res.redirected).toEqual(['slack:UOWNER']);
-    expect(res.skipped).toEqual(['telegram:12345']);
-    expect(getUserDm('telegram:12345', 'slack')).toBeUndefined();
+    expect(res.eligibleNow).toEqual(['slack:UOWNER']);
   });
 
   it('is idempotent — re-running reuses the same mg and re-upserts the same rows', () => {
@@ -176,7 +228,7 @@ describe('routeApprovalsToChannel', () => {
 
     expect(second.created).toBe(false);
     expect(second.messagingGroupId).toBe(first.messagingGroupId);
-    expect(getUserDm('slack:UOWNER', 'slack')?.messaging_group_id).toBe(first.messagingGroupId);
+    expect(getApprovalsChannel('slack')?.messaging_group_id).toBe(first.messagingGroupId);
   });
 
   it('reuses a pre-existing messaging_group for the channel instead of creating a new one', () => {
@@ -189,7 +241,7 @@ describe('routeApprovalsToChannel', () => {
 
     expect(res.created).toBe(false);
     expect(res.messagingGroupId).toBe(pre.messagingGroupId);
-    expect(getUserDm('slack:ULATE', 'slack')?.messaging_group_id).toBe(pre.messagingGroupId);
+    expect(getApprovalsChannel('slack')?.messaging_group_id).toBe(pre.messagingGroupId);
   });
 
   it('includes scoped admins when scopedAgentGroupIds is passed', () => {
@@ -200,6 +252,6 @@ describe('routeApprovalsToChannel', () => {
 
     const res = routeApprovalsToChannel({ platformId: 'C0SHARED', scopedAgentGroupIds: ['ag-1'] });
 
-    expect(res.redirected.sort()).toEqual(['slack:UOWNER', 'slack:USCOPED']);
+    expect(res.eligibleNow.sort()).toEqual(['slack:UOWNER', 'slack:USCOPED']);
   });
 });

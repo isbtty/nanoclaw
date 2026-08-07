@@ -1,30 +1,32 @@
 /**
- * deshi#517 — 承認/許可通知を owner/admin 個人 DM ではなく共有チャンネルに集約する
- * 「案D: `user_dms` リダイレクト」の配線ヘルパ。**コア非改修**。
+ * deshi#517 / boswell#712 — 承認/許可通知を owner/admin 個人 DM ではなく共有
+ * チャンネルに集約する配線ヘルパ。
  *
  * ## 仕組み（なぜ動くか）
  *
  * host が承認カード/招待/知識スコープ編集リンクを送るとき、宛先は必ず
  * `ensureUserDm(approver)`（`src/modules/permissions/user-dm.ts`）で解決される。
- * `ensureUserDm` は `user_dms` キャッシュにヒットすると `is_group` を検証せず
- * その messaging_group をそのまま返す。よって owner/admin の `user_dms` 行を
- * **共有チャンネルの messaging_group** に向けておけば、カードは個人 DM ではなく
- * その共有チャンネルに投稿される。
+ * ここでは共有チャンネルの messaging_group を `deshi_approvals_channel` に**設定
+ * として**書くだけで、実際の振り替えは配信時に `resolve-override.ts` が
+ * `user_roles` を引き直して行う。
+ *
+ * 旧方式（deshi#517）は owner/admin の `user_dms` 行を書き換えるスナップショット
+ * だったため、配線後に付与した admin には適用されなかった（boswell#712 の事故）。
+ * 本ヘルパは `user_dms` に一切書かない。
  *
  * 承認ボタンは `clickerId === approver_user_id || hasAdminPrivilege(...)`
- * （`src/modules/permissions/index.ts:239,320`）で認可されるため、宛先が特定 1 人でも
+ * （`src/modules/permissions/index.ts:251,334`）で認可されるため、宛先が特定 1 人でも
  * チャンネルにいる owner/admin なら誰が押しても承認が通る。
  *
  * ## スコープ
  *
- * deshi#517 は Slack 単一導入が前提。よって channel_type は既定で `'slack'` とし、
- * `slack:` identity を持つ owner/admin のみをリダイレクトする。他 channel_type の
- * approver は対象外（元の DM 解決のまま）。
+ * Slack 単一導入が前提。channel_type は既定で `'slack'`、1 channel_type = 1 共有
+ * チャンネル。他 channel_type の approver は対象外（元の DM 解決のまま）。
  *
  * ## 影響範囲（重要）
  *
- * `user_dms` を経由するのは承認/招待/知識リンクの host 起点通知だけ。ユーザー起点の
- * 普通の DM 会話は `user_dms` を通らないため一切影響を受けない。
+ * override が効くのは host 起点通知だけ。ユーザー起点の普通の DM 会話は
+ * `ensureUserDm` を通らないため一切影響を受けない。
  *
  * 実機での実行は setup skill `/boswell-route-approvals-to-channel` 経由（別 Mac mini 上）。
  */
@@ -33,10 +35,11 @@ import {
   getMessagingGroupByPlatform,
   setMessagingGroupDeniedAt,
 } from '../../db/messaging-groups.js';
+import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
 import type { MessagingGroup } from '../../types.js';
-import { upsertUserDm } from '../../modules/permissions/db/user-dms.js';
 import { getAdminsOfAgentGroup, getGlobalAdmins, getOwners } from '../../modules/permissions/db/user-roles.js';
+import { clearApprovalsChannel, setApprovalsChannel } from './db.js';
 
 export interface WireOptions {
   /**
@@ -49,8 +52,9 @@ export interface WireOptions {
   /** 共有チャンネル mg を新規作成する場合の表示名。 */
   name?: string;
   /**
-   * 追加でリダイレクト対象にする scoped admin の agent_group_id 群。
-   * 省略時は owner + global admin のみ。
+   * `eligibleNow` の表示に含める scoped admin の agent_group_id 群。
+   * 省略時は owner + global admin のみを数える。
+   * **配線の対象範囲には影響しない**（override は scoped admin も常に拾う）。
    */
   scopedAgentGroupIds?: string[];
 }
@@ -59,13 +63,13 @@ export interface WireResult {
   messagingGroupId: string;
   /** mg を今回新規作成したか（既存を再利用したなら false）。 */
   created: boolean;
-  /** 共有チャンネルに向けた user_id 群。 */
-  redirected: string[];
+  /** 旧方式（deshi#517）の残骸として掃除した `user_dms` 行数。 */
+  clearedSnapshotRows: number;
   /**
-   * owner/admin だが対象 channel_type の identity ではないため据え置いた user_id 群。
-   * （例: Slack 単一運用で `telegram:` の owner）
+   * 実行時点で override 対象になる owner/admin。**あくまで参考値**で、
+   * 実際の対象は配信のたびに `user_roles` から決まる（以降に付与した admin も入る）。
    */
-  skipped: string[];
+  eligibleNow: string[];
   /**
    * 同一チャンネルの、prefix 無し生 ID（`Cxxxx`）で作られた壊れた mg を検出した場合の
    * その id。deshi#528 の修正前に配線した環境の残骸。存在すれば呼び出し側（run.ts）が
@@ -100,9 +104,9 @@ function encodePlatformId(channelType: string, raw: string): string {
 }
 
 /**
- * 共有チャンネルの mg を find-or-create し、対象 channel_type の identity を持つ
- * owner/admin の `user_dms` をそこへ upsert する。冪等（再実行で同じ mg に upsert
- * されるだけ）。DB は呼び出し前に `initDb()` 済みであること。
+ * 共有チャンネルの mg を find-or-create し、それを `deshi_approvals_channel` に
+ * 設定として書く。冪等（再実行で同じ mg を指すだけ）。DB は呼び出し前に
+ * `initDb()` 済みであること。
  */
 export function routeApprovalsToChannel(opts: WireOptions): WireResult {
   const channelType = opts.channelType ?? 'slack';
@@ -156,36 +160,31 @@ export function routeApprovalsToChannel(opts: WireOptions): WireResult {
     });
   }
 
-  // 2) 対象 user_id を集約（owner + global admin + 任意で scoped admin）。順序無視・重複排除。
-  const targets = new Set<string>();
-  for (const r of getOwners()) targets.add(r.user_id);
-  for (const r of getGlobalAdmins()) targets.add(r.user_id);
+  // 2) 配線を設定として保存。以降の対象判定は配信のたびに resolve-override が行う。
+  setApprovalsChannel(channelType, mg.id);
+
+  // 3) 旧方式（deshi#517）が書いた `user_dms` の残骸を掃除する。これをやらないと
+  //    設定を消しても該当行が共有チャンネルを指したままでロールバックが効かない。
+  //    `user_dms` を本来の cold-DM キャッシュに戻す。
+  const cleared = getDb()
+    .prepare('DELETE FROM user_dms WHERE channel_type = ? AND messaging_group_id = ?')
+    .run(channelType, mg.id);
+  const clearedSnapshotRows = cleared.changes;
+
+  // 4) 参考表示用: 実行時点で override 対象になる owner/admin。
+  const eligible = new Set<string>();
+  for (const r of getOwners()) eligible.add(r.user_id);
+  for (const r of getGlobalAdmins()) eligible.add(r.user_id);
   for (const gid of opts.scopedAgentGroupIds ?? []) {
-    for (const r of getAdminsOfAgentGroup(gid)) targets.add(r.user_id);
+    for (const r of getAdminsOfAgentGroup(gid)) eligible.add(r.user_id);
   }
+  const eligibleNow = [...eligible].filter((userId) => channelTypeOf(userId) === channelType);
 
-  // 3) 対象 channel_type の identity を持つ user だけ共有チャンネルへ向ける。
-  const redirected: string[] = [];
-  const skipped: string[] = [];
-  for (const userId of targets) {
-    if (channelTypeOf(userId) !== channelType) {
-      skipped.push(userId);
-      continue;
-    }
-    upsertUserDm({
-      user_id: userId,
-      channel_type: channelType,
-      messaging_group_id: mg.id,
-      resolved_at: now,
-    });
-    redirected.push(userId);
-  }
-
-  log.info('routeApprovalsToChannel: redirected approvers to shared channel', {
+  log.info('routeApprovalsToChannel: wired shared approvals channel', {
     channelType,
     messagingGroupId: mg.id,
-    redirected: redirected.length,
-    skipped: skipped.length,
+    clearedSnapshotRows,
+    eligibleNow: eligibleNow.length,
   });
 
   // legacy（prefix 無し）mg が正規 mg とは別に残っていれば報告する。FK 参照
@@ -200,5 +199,15 @@ export function routeApprovalsToChannel(opts: WireOptions): WireResult {
     });
   }
 
-  return { messagingGroupId: mg.id, created, redirected, skipped, legacyMessagingGroupId };
+  return { messagingGroupId: mg.id, created, clearedSnapshotRows, eligibleNow, legacyMessagingGroupId };
+}
+
+/**
+ * 配線を解除する。設定行を消すだけで override は即座に効かなくなり、以降の
+ * host 起点通知は upstream の通常 DM 解決に戻る。`user_dms` は配線時に掃除済み
+ * なので、次回の cold DM で本来の個人 DM が解決し直される。
+ */
+export function clearApprovalsChannelWiring(channelType = 'slack'): void {
+  clearApprovalsChannel(channelType);
+  log.info('routeApprovalsToChannel: cleared shared approvals channel wiring', { channelType });
 }

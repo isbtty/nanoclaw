@@ -210,6 +210,31 @@ describe('reject with reason', () => {
     expect(lastRelayedText()).toBe('Your create_agent request was rejected by admin.');
   });
 
+  it('does not swallow a bystander message on the same channel (boswell#712)', async () => {
+    const { captureReasonReply } = await import('./reason-capture.js');
+    seedApproval('appr-6');
+    await clickRejectWithReason('appr-6');
+
+    // Someone else talking in the (shared) channel the prompt landed in.
+    const bystander: InboundEvent = {
+      channelType: DM_CHANNEL,
+      platformId: DM_PLATFORM,
+      threadId: null,
+      message: {
+        id: 'm-2',
+        kind: 'chat',
+        content: JSON.stringify({ sender: 'other', senderId: 'other-1', text: 'unrelated chatter' }),
+        timestamp: now(),
+      },
+    };
+
+    expect(await captureReasonReply(bystander)).toBe(false);
+    // The hold is still open — the armed admin can still answer.
+    expect(getPendingApproval('appr-6')?.status).toBe('awaiting_reason');
+    expect(await captureReasonReply(dmReply('my actual reason'))).toBe(true);
+    expect(lastRelayedText()).toBe('Your create_agent request was rejected by admin: "my actual reason"');
+  });
+
   it('does not swallow a later DM once the hold was already finalized', async () => {
     const { captureReasonReply } = await import('./reason-capture.js');
     seedApproval('appr-5');
