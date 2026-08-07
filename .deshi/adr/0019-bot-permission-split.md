@@ -50,6 +50,13 @@ boswell daemon 側で per-user のゲートを掛けられない。#642 自身�
 | 管理者BOT | **primary** (upstream の `SLACK_BOT_TOKEN` = instance `slack`) | skill 実行・調査・成果物・権限管理 |
 | 知識検索BOT | named instance (ADR-0018 の `slack-<suffix>`) | 公開範囲の知識検索と、それに基づく回答のみ |
 
+**instance 登録のコードは新規に要らない。** ADR-0018 の `src/deshi/channels/slack-instances.ts`
+(isbtty/nanoclaw#72 で実装済み) がそのまま使える。`DESHI_SLACK_WORKSPACES` は名前こそ
+「ワークスペース」だが、機構は **1 bot token = 1 instance** なので、**同一ワークスペースに 2 つ目の
+Slack App を入れる**本構成でも同じ経路で登録できる。env にサフィックスと token を足して host を
+再起動するだけで、コア (upstream 管理ファイル) への diff はゼロ。env 宣言が無ければインスタンスは
+登録されないため、導入していない環境には知識検索BOT がそもそも存在しない (§0 の適用範囲と整合)。
+
 管理者BOT を primary にするのは、ADR-0018 既知制約 1 のため。cold DM と承認カードの配送は
 `getChannelAdapter('slack')` の channelType フォールバックで **primary インスタンスに解決される**。
 承認カードが知識検索BOT から届くのは事故なので、管理者BOT を primary 側に置く。

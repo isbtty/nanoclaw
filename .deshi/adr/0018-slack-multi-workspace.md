@@ -1,6 +1,6 @@
 # ADR-0018: Slack マルチワークスペース対応 — deshi 側 instance 登録で実現
 
-- Status: accepted (実装待ち)
+- Status: accepted (実装済み — isbtty/nanoclaw#72)
 - Date: 2026-07-13
 - Refs: isbtty/deshi#560
 
