@@ -77,12 +77,14 @@ ncl roles revoke --user slack:U01ABCDEF --role admin
 
 ## 運用フロー（2 スキルの組み合わせ）
 
-1. `/boswell-manage-nanoclaw-admins grant` … 共同対応する人を admin 化
-2. `/boswell-route-approvals-to-channel` … 通知先を共有 Slack チャンネルに配線
-3. 以後、許可申請は共有チャンネルに1枚 → owner/admin の誰かが押して承認
+- `/boswell-route-approvals-to-channel` … 通知先を共有 Slack チャンネルに配線（1 回だけ）
+- `/boswell-manage-nanoclaw-admins grant` … 共同対応する人を admin 化
+
+**順序は問わない。** 配線済みなら grant するだけでその人も共有チャンネル経由になる
+（対象は配信のたびに `user_roles` から判定される。boswell#712）。再配線は不要。
 
 ## 関連
 
 - 通知先の配線（どこに出すか）: `/boswell-route-approvals-to-channel`
 - 承認者の列挙順: `pickApprover`（`src/modules/approvals/primitive.ts` — scoped→global→owner）
-- 設計: isbtty/deshi#517
+- 設計: isbtty/deshi#517, isbtty/boswell#712
