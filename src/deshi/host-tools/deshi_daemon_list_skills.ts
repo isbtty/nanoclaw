@@ -12,8 +12,10 @@
  * 意味付け (list は起動時 discover、refresh は実行時 re-fetch) で行う。
  *
  * 認証: deshi daemon の `GET /skills` は Bearer 必須 (auto-auth は POST /run 限定)。
- * したがって `DESHI_DAEMON_DEVICE_SECRET` 環境変数の Bearer を必須とする。
+ * したがって `BOSWELL_DAEMON_DEVICE_SECRET` (旧名 `DESHI_DAEMON_DEVICE_SECRET` も可) の Bearer を必須とする。
  */
+
+import { MISSING_SECRET_MESSAGE, resolveDaemonEnv } from '../daemon-env.js';
 
 export interface DaemonListSkillsResponse {
   ok: true;
@@ -26,10 +28,9 @@ export interface DaemonListSkillsResponse {
 }
 
 export async function daemonListSkillsHandler(_body: unknown): Promise<DaemonListSkillsResponse> {
-  const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
-  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET;
+  const { url: deshiUrl, secret } = resolveDaemonEnv();
   if (!secret) {
-    throw new Error('DESHI_DAEMON_DEVICE_SECRET is not set on host-tools-server');
+    throw new Error(`${MISSING_SECRET_MESSAGE} on host-tools-server`);
   }
 
   const res = await fetch(`${deshiUrl}/skills`, {

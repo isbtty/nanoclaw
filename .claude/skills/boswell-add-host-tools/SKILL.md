@@ -66,25 +66,27 @@ agent への使い方ガイドは `container/CLAUDE.md` の `<!-- BEGIN deshi: h
 
 詳細は `.deshi/docs/mcp-tool-naming.md` および `.deshi/adr/0009-mcp-tool-naming.md` 参照。
 
-## Phase 0: 事前準備 — nanoclaw/.env に DESHI_DAEMON_DEVICE_SECRET を設定
+## Phase 0: 事前準備 — nanoclaw/.env に BOSWELL_DAEMON_DEVICE_SECRET を設定
 
-`daemon_poll_until_done` handler が deshi daemon の `GET /jobs/:jobId` を Bearer 認証で叩くため、host-tools-server には `DESHI_DAEMON_DEVICE_SECRET` を渡す必要がある。**deshi daemon `.env` の `DAEMON_DEVICE_SECRET` と同じ値を手動コピー** して nanoclaw 側にも置く (リポジトリ境界を保つため二重管理を許容)。
+`daemon_poll_until_done` handler が boswell daemon の `GET /jobs/:jobId` を Bearer 認証で叩くため、host-tools-server には `BOSWELL_DAEMON_DEVICE_SECRET` を渡す必要がある。**boswell daemon `.env` の `DAEMON_DEVICE_SECRET` と同じ値を手動コピー** して nanoclaw 側にも置く (リポジトリ境界を保つため二重管理を許容)。
+
+> ADR-0036 の deshi → boswell リネーム前にセットアップした機には旧 `DESHI_DAEMON_*` が残っている。nanoclaw は新旧どちらの名前でも読む (新名を優先 / `src/deshi/daemon-env.ts`) ので、既存機はそのままで動く。新規セットアップは `BOSWELL_` で書くこと。
 
 ```bash
-# 1. deshi daemon 側の secret を確認
-grep '^DAEMON_DEVICE_SECRET=' /Users/<you>/code/deshi/daemon/.env
+# 1. boswell daemon 側の secret を確認
+grep '^DAEMON_DEVICE_SECRET=' /Users/<you>/code/boswell/daemon/.env
 
 # 2. nanoclaw/.env に追記 (実値はコピー、リポジトリにはコミットしない)
 cat >> .env <<EOF
-# deshi host-tools bridge (工程 5 で追加)
-DESHI_DAEMON_URL=http://localhost:3100
-DESHI_DAEMON_DEVICE_SECRET=<deshi daemon の同名 secret と同じ値>
+# boswell host-tools bridge (工程 5 で追加)
+BOSWELL_DAEMON_URL=http://localhost:3100
+BOSWELL_DAEMON_DEVICE_SECRET=<boswell daemon の同名 secret と同じ値>
 EOF
 ```
 
-secret rotation 時は **両方を更新** する必要がある (deshi daemon と nanoclaw)。
+secret rotation 時は **両方を更新** する必要がある (boswell daemon と nanoclaw)。
 
-`POST /run` は deshi daemon 側の localhost auto-auth で通るため、`DESHI_DAEMON_DEVICE_SECRET` 未設定でも `daemon_run_skill` は動く。一方、`daemon_poll_until_done` は handler 起動時に env を check して未設定なら即エラー。
+`POST /run` は boswell daemon 側の localhost auto-auth で通るため、device secret 未設定でも `daemon_run_skill` は動く。一方、`daemon_poll_until_done` は handler 起動時に env を check して未設定なら即エラー。**`daemon_run_skill` だけ通って `daemon_poll_until_done` が落ちる場合は、ここの設定漏れを疑う。**
 
 ## Phase 1: 適用済みチェック
 
@@ -97,8 +99,8 @@ test -f src/deshi/host-tools-server.ts \
   && test -f src/deshi/host-tools/deshi_daemon_poll_until_done.ts \
   && echo "Bridge files OK"
 
-# nanoclaw/.env に DESHI_DAEMON_DEVICE_SECRET が設定されているか
-grep -q '^DESHI_DAEMON_DEVICE_SECRET=' .env && echo ".env OK"
+# nanoclaw/.env に device secret が設定されているか (新旧どちらの名前でも可)
+grep -qE '^(BOSWELL|DESHI)_DAEMON_DEVICE_SECRET=' .env && echo ".env OK"
 ```
 
 このスキルは **agent group ごとに 1 回ずつ実行** する想定。同じ group に重ねて実行しても idempotent。
@@ -181,12 +183,21 @@ macOS 起動時に自動起動し、落ちたら自動再起動する。`~/Libra
 ```bash
 PROJECT_ROOT="$(pwd)"
 PNPM_PATH="$(command -v pnpm)"
-DESHI_DAEMON_URL="$(grep '^DESHI_DAEMON_URL=' .env | cut -d= -f2- | tr -d '"' || echo 'http://localhost:3100')"
-DESHI_DAEMON_DEVICE_SECRET="$(grep '^DESHI_DAEMON_DEVICE_SECRET=' .env | cut -d= -f2- | tr -d '"')"
+# .env のキー名は新 BOSWELL_ 優先 / 旧 DESHI_ フォールバック。
+# plist に書き込むキー名 (テンプレートの __DESHI_DAEMON_*__) は旧名のまま:
+# host-tools-server は新旧どちらの env 名でも読む (src/deshi/daemon-env.ts)。
+# 1 回の grep で両方を拾うと「.env で先に書かれている方」が当たってしまうので、
+# BOSWELL_ を引いてから空のときだけ DESHI_ を引く。
+read_env_key() { grep -m1 "^$1=" .env | cut -d= -f2- | tr -d '"'; }
+DESHI_DAEMON_URL="$(read_env_key BOSWELL_DAEMON_URL)"
+DESHI_DAEMON_URL="${DESHI_DAEMON_URL:-$(read_env_key DESHI_DAEMON_URL)}"
+DESHI_DAEMON_URL="${DESHI_DAEMON_URL:-http://localhost:3100}"
+DESHI_DAEMON_DEVICE_SECRET="$(read_env_key BOSWELL_DAEMON_DEVICE_SECRET)"
+DESHI_DAEMON_DEVICE_SECRET="${DESHI_DAEMON_DEVICE_SECRET:-$(read_env_key DESHI_DAEMON_DEVICE_SECRET)}"
 DEST="$HOME/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist"
 
 if [ -z "$DESHI_DAEMON_DEVICE_SECRET" ]; then
-  echo "ERROR: DESHI_DAEMON_DEVICE_SECRET not set in .env. See Phase 0." >&2
+  echo "ERROR: BOSWELL_DAEMON_DEVICE_SECRET (nor legacy DESHI_DAEMON_DEVICE_SECRET) set in .env. See Phase 0." >&2
   exit 1
 fi
 
@@ -308,8 +319,9 @@ ncl groups restart --id "$GROUP_ID"
 | `Failed to reach deshi host service` エラー | host-tools-server が起動しているか (`curl http://127.0.0.1:5180/health`)。モード 2 なら `launchctl list \| grep host-tools` で running 状態を確認 |
 | `command not found: bun` (container 内) | `./container/build.sh` がクリーン完了したか。container 内 stdio MCP server は Bun で動く前提 |
 | プレースホルダが残っている (モード 2) | `sed` の置換が完全に通ったか、`cat ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist` で `__PROJECT_ROOT__` 等が残っていないか確認 |
-| `DESHI_DAEMON_DEVICE_SECRET is not set on host-tools-server` | Phase 0 の .env 設定を忘れている。`grep DESHI_DAEMON .env` で確認 |
-| `daemon_run_skill` が 500 を返す | (1) deshi daemon が起動しているか (`curl http://localhost:3100/run -X POST -d '{}'` が応答するか) (2) `DESHI_DAEMON_URL` が正しいか |
+| `BOSWELL_DAEMON_DEVICE_SECRET (or legacy DESHI_DAEMON_DEVICE_SECRET) is not set` | Phase 0 の .env 設定を忘れている。`grep -E '(BOSWELL\|DESHI)_DAEMON' .env` で確認 |
+| `daemon_run_skill` は通るのに `daemon_poll_until_done` だけ落ちる | 同上。`POST /run` は daemon 側の localhost auto-auth で通るため、device secret 未設定でも前段だけ成功してしまう |
+| `daemon_run_skill` が 500 を返す | (1) boswell daemon が起動しているか (`curl http://localhost:3100/run -X POST -d '{}'` が応答するか) (2) `BOSWELL_DAEMON_URL` が正しいか |
 | `daemon_poll_until_done` の結果が `daemonRestarted: true` | deshi daemon が job の途中で再起動した。再実行が必要 |
 | `daemon_poll_until_done` の結果が `timedOut: true` | skill 実行が 30 分以上かかった。`GET /jobs/<jobId>` で後追い可能 |
 

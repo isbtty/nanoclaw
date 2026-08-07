@@ -6,7 +6,7 @@
  * 命名規則は ADR-0010 (kebab-case) を参照。
  *
  * 認証は host-tools-server.ts の dispatch 側で一括検証する (Bearer
- * <DESHI_DAEMON_DEVICE_SECRET>、timingSafeEqual)。本 barrel に登録する
+ * <BOSWELL_DAEMON_DEVICE_SECRET>、timingSafeEqual)。本 barrel に登録する
  * handler は認証済みリクエストを処理する前提。
  *
  * 新規 inbound handler を追加するときは:

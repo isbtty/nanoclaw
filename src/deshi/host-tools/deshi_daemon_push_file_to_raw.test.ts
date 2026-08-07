@@ -11,10 +11,13 @@ describe('daemonPushFileToRawHandler', () => {
 
   beforeEach(() => {
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) delete process.env.DESHI_DAEMON_URL;
     else process.env.DESHI_DAEMON_URL = originalUrl;
@@ -149,7 +152,7 @@ describe('daemonPushFileToRawHandler', () => {
         dest_subpath: 'inbox/nanoclaw/2026-06-10/x.txt',
         sha256: helloSha,
       }),
-    ).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
+    ).rejects.toThrow(/BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/);
   });
 
   it('daemon 4xx をエラーとして透過する (sha256 mismatch 等)', async () => {

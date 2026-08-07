@@ -16,10 +16,13 @@ describe('fetchDeshiDelegationFragment', () => {
   beforeEach(() => {
     readEnvFileMock.mockReturnValue({});
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) {
       delete process.env.DESHI_DAEMON_URL;
@@ -66,7 +69,9 @@ describe('fetchDeshiDelegationFragment', () => {
 
   it('DESHI_DAEMON_DEVICE_SECRET が未設定なら throw する', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
-    await expect(fetchDeshiDelegationFragment()).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
+    await expect(fetchDeshiDelegationFragment()).rejects.toThrow(
+      /BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/,
+    );
   });
 
   it('process.env に secret が無くても .env fallback から拾う (launchd plist に env が無いケース)', async () => {
@@ -109,7 +114,9 @@ describe('fetchDeshiDelegationFragment', () => {
   it('secret が process.env にも .env にも無ければ throw する', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
     readEnvFileMock.mockReturnValue({});
-    await expect(fetchDeshiDelegationFragment()).rejects.toThrow(/DESHI_DAEMON_DEVICE_SECRET is not set/);
+    await expect(fetchDeshiDelegationFragment()).rejects.toThrow(
+      /BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/,
+    );
   });
 
   it('non-2xx の場合は status と body 込みで throw する', async () => {

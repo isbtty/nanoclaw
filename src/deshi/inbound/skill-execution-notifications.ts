@@ -15,7 +15,7 @@
  * (会話継続性の維持)。
  *
  * - HTTP path: POST /inbound/deshi/skill-execution-notifications
- * - 認証: dispatch 側で Bearer <DESHI_DAEMON_DEVICE_SECRET> を一括検証
+ * - 認証: dispatch 側で Bearer <BOSWELL_DAEMON_DEVICE_SECRET> を一括検証
  * - 命名規則: ADR-0010 (kebab-case、direct HTTP receiver 系統)
  * - 詳細仕様: isbtty/deshi#247 + ADR-0011
  *

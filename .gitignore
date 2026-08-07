@@ -24,6 +24,9 @@ groups/*
 *.keys.json
 .env
 .env*
+# .env.example は実値を含まないテンプレートで追跡対象。
+# 除外しておかないとエディタ側が ignored 扱いにして差分が見えなくなる。
+!.env.example
 
 # Temp files
 .tmp-*

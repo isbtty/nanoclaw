@@ -10,7 +10,7 @@
  *
  *   2. **Direct HTTP receivers (inbound)** (`src/deshi/inbound/`, kebab-case)
  *      deshi daemon 等の外部システムからの push を受ける外部経路。
- *      Bearer <DESHI_DAEMON_DEVICE_SECRET> で dispatch 一括認証。命名規則は
+ *      Bearer <BOSWELL_DAEMON_DEVICE_SECRET> で dispatch 一括認証。命名規則は
  *      ADR-0010。
  *
  * ルーティング:
@@ -27,9 +27,11 @@
  *                               127.0.0.1 bind だと container から到達できない。
  *                               Linux デプロイでは 0.0.0.0 を設定する(Bearer 認証必須 +
  *                               閉域前提)。
- *   DESHI_DAEMON_DEVICE_SECRET (inbound endpoint の Bearer secret。未設定なら
+ *   BOSWELL_DAEMON_DEVICE_SECRET (inbound endpoint の Bearer secret。未設定なら
  *                               inbound は常に 401。MCP-backed handler 用には
- *                               別途 daemon_poll_until_done でも使われる)
+ *                               別途 daemon_poll_until_done でも使われる。
+ *                               旧名 DESHI_DAEMON_DEVICE_SECRET も互換で読む
+ *                               — 解決順は daemon-env.ts 参照)
  *
  * 起動 (host の Node ランタイム):
  *   pnpm exec tsx src/deshi/host-tools-server.ts
@@ -41,6 +43,7 @@ import path from 'node:path';
 
 import { DATA_DIR } from '../config.js';
 import { initDb } from '../db/index.js';
+import { MISSING_SECRET_MESSAGE, resolveDaemonEnv } from './daemon-env.js';
 import { handlers } from './host-tools/index.js';
 import { inboundHandlers } from './inbound/index.js';
 import { InboundHandlerError } from './inbound/errors.js';
@@ -135,7 +138,7 @@ async function dispatch(name: string, body: unknown, res: ServerResponse): Promi
  * inbound endpoint の Bearer secret 検証 (timing-safe)。
  *
  * `Authorization: Bearer <secret>` ヘッダの secret 部分を
- * `DESHI_DAEMON_DEVICE_SECRET` と byte-wise に比較する。
+ * 解決済みの device secret (daemon-env.ts) と byte-wise に比較する。
  * 長さが違う / secret 未設定 / Bearer 形式違反は早期 false。
  *
  * `timingSafeEqual` は長さが違う Buffer に対して throw するため、
@@ -145,7 +148,7 @@ function verifyInboundBearer(authHeader: string | undefined): boolean {
   // deshi → boswell リネーム移行中: boswell daemon は BOSWELL_DAEMON_DEVICE_SECRET
   // を Bearer に載せる想定だが、移行未完環境では旧 DESHI_DAEMON_DEVICE_SECRET
   // だけが export されている。両方を受け付けて配信を落とさない (boswell #664)。
-  const expected = process.env.BOSWELL_DAEMON_DEVICE_SECRET ?? process.env.DESHI_DAEMON_DEVICE_SECRET ?? '';
+  const expected = resolveDaemonEnv().secret ?? '';
   if (expected.length === 0) return false;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return false;
   const provided = authHeader.slice('Bearer '.length);
@@ -246,9 +249,7 @@ server.listen(PORT, BIND_HOST, () => {
   log(`listening on http://${BIND_HOST}:${PORT}`);
   log(`registered handlers (MCP-backed): ${Object.keys(handlers).join(', ')}`);
   log(`registered handlers (inbound): ${Object.keys(inboundHandlers).join(', ')}`);
-  if ((process.env.BOSWELL_DAEMON_DEVICE_SECRET ?? process.env.DESHI_DAEMON_DEVICE_SECRET ?? '').length === 0) {
-    log(
-      'WARNING: BOSWELL_DAEMON_DEVICE_SECRET (nor DESHI_DAEMON_DEVICE_SECRET) is not set — /inbound/{boswell,deshi}/* will always return 401',
-    );
+  if (!resolveDaemonEnv().secret) {
+    log(`WARNING: ${MISSING_SECRET_MESSAGE} — /inbound/{boswell,deshi}/* will always return 401`);
   }
 });

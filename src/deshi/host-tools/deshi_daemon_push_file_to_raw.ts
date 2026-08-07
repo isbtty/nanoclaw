@@ -28,7 +28,7 @@
  * ## 認証
  *
  * deshi daemon `/files/upload` は Bearer 必須 (loopback 例外なし)。
- * `DESHI_DAEMON_DEVICE_SECRET` を本プロセスから付与する。
+ * `BOSWELL_DAEMON_DEVICE_SECRET` (旧名 `DESHI_DAEMON_DEVICE_SECRET` も可) を本プロセスから付与する。
  *
  * ## エラー
  *
@@ -40,6 +40,8 @@
  *
  * 仕様: ADR-0008 / ADR-0009、deshi PR #394。
  */
+
+import { MISSING_SECRET_MESSAGE, resolveDaemonEnv } from '../daemon-env.js';
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
@@ -71,10 +73,9 @@ export interface DaemonPushFileToRawResponse {
 export async function daemonPushFileToRawHandler(body: unknown): Promise<DaemonPushFileToRawResponse> {
   const req = validateRequest(body);
 
-  const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
-  const secret = process.env.DESHI_DAEMON_DEVICE_SECRET;
+  const { url: deshiUrl, secret } = resolveDaemonEnv();
   if (!secret) {
-    throw new Error('DESHI_DAEMON_DEVICE_SECRET is not set on host-tools-server');
+    throw new Error(`${MISSING_SECRET_MESSAGE} on host-tools-server`);
   }
 
   const fileBytes = Buffer.from(req.file_b64, 'base64');

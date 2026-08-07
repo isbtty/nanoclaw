@@ -9,10 +9,13 @@ describe('daemonGogHandler', () => {
 
   beforeEach(() => {
     process.env.DESHI_DAEMON_URL = 'http://localhost:3100';
+    vi.stubEnv('BOSWELL_DAEMON_URL', undefined);
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', undefined);
     process.env.DESHI_DAEMON_DEVICE_SECRET = 'test-secret';
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
     if (originalUrl === undefined) delete process.env.DESHI_DAEMON_URL;
     else process.env.DESHI_DAEMON_URL = originalUrl;
@@ -122,10 +125,22 @@ describe('daemonGogHandler', () => {
 
   // ── env / daemon errors ─────────────────────────────────────────────────
 
-  it('DESHI_DAEMON_DEVICE_SECRET 未設定なら throw', async () => {
+  it('新旧キーが両方設定されている機では、新しい BOSWELL_ 側の接続情報を使う', async () => {
+    process.env.BOSWELL_DAEMON_URL = 'http://boswell.example:9000';
+    process.env.BOSWELL_DAEMON_DEVICE_SECRET = 'boswell-secret';
+    const fetchMock = mockOk(validPayload);
+
+    await daemonGogHandler({ subcommand: 'calendar.events' });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://boswell.example:9000/gog');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer boswell-secret:nanoclaw');
+  });
+
+  it('device secret がどちらのキーでも設定されていなければ throw', async () => {
     delete process.env.DESHI_DAEMON_DEVICE_SECRET;
     await expect(daemonGogHandler({ subcommand: 'calendar.events' })).rejects.toThrow(
-      /DESHI_DAEMON_DEVICE_SECRET is not set/,
+      /BOSWELL_DAEMON_DEVICE_SECRET \(or legacy DESHI_DAEMON_DEVICE_SECRET\) is not set/,
     );
   });
 

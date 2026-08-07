@@ -20,6 +20,7 @@
 import { spawn } from 'node:child_process';
 
 import { putJobAck } from '../ack-cache.js';
+import { resolveDaemonEnv } from '../daemon-env.js';
 import { log } from '../../log.js';
 
 interface ChannelContext {
@@ -129,7 +130,7 @@ export async function daemonRunSkillHandler(body: unknown): Promise<DaemonRunSki
     throw new Error('daemonRunSkill: input and channelContext are required');
   }
 
-  const deshiUrl = process.env.DESHI_DAEMON_URL ?? 'http://localhost:3100';
+  const { url: deshiUrl } = resolveDaemonEnv();
 
   const res = await fetch(`${deshiUrl}/run`, {
     method: 'POST',
