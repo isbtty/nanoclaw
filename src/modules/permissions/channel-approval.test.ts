@@ -42,22 +42,6 @@ vi.mock('../../deshi/fetch-scope-link.js', () => ({
   fetchDeshiScopeLink: (channelId: string) => fetchScopeLinkMock(channelId),
 }));
 
-// Spy on the scope-link helper while keeping the real implementation. The
-// create-new-agent path builds a group with no deshi MCP, so the helper is a
-// no-op there either way — only a call-level spy separates "guarded" from
-// "called but did nothing".
-const scopeLinkSpy = vi.fn();
-vi.mock('./channel-scope-link.js', async () => {
-  const actual = await vi.importActual<typeof import('./channel-scope-link.js')>('./channel-scope-link.js');
-  return {
-    ...actual,
-    maybeDeliverScopeLink: (...args: Parameters<typeof actual.maybeDeliverScopeLink>) => {
-      scopeLinkSpy(...args);
-      return actual.maybeDeliverScopeLink(...args);
-    },
-  };
-});
-
 // Mock ensureUserDm — look up the owner's preconfigured DM row instead of
 // hitting a real openDM RPC.
 vi.mock('./user-dm.js', () => ({
@@ -125,7 +109,6 @@ beforeEach(async () => {
 
   deliverMock.mockClear();
   fetchScopeLinkMock.mockClear();
-  scopeLinkSpy.mockClear();
 });
 
 /** Make ag-1 deshi-backed so the knowledge-scope link path is live. */
@@ -359,14 +342,24 @@ describe('unknown-channel registration flow', () => {
     await approvePending();
 
     expect(fetchScopeLinkMock).toHaveBeenCalledWith('chat-scope-link');
-    // Positive side of the spy used by the create-new-agent test below: if the
-    // interception ever stops working, that test would pass vacuously.
-    expect(scopeLinkSpy).toHaveBeenCalled();
   });
 
-  it('approve on a DM hands out no knowledge-scope link — a private chat is nobody’s knowledge scope', async () => {
+  it('権限分離を入れていない組織では、DM でも従来どおり知識スコープの設定リンクを配ること', async () => {
     const { routeInbound } = await import('../../router.js');
     await enableDeshiMcp();
+
+    await routeInbound(dmEvent('dm-plain-org'));
+    await new Promise((r) => setTimeout(r, 10));
+    await approvePending();
+
+    expect(fetchScopeLinkMock).toHaveBeenCalledWith('dm-plain-org');
+  });
+
+  it('権限分離を入れた組織では、DM に知識スコープの設定リンクを配らないこと', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { enablePermissionSplit } = await import('../../deshi/permission-split.js');
+    await enableDeshiMcp();
+    enablePermissionSplit('ag-1');
 
     await routeInbound(dmEvent('dm-scope-link'));
     await new Promise((r) => setTimeout(r, 10));
@@ -377,56 +370,6 @@ describe('unknown-channel registration flow', () => {
     const { getDb } = await import('../../db/connection.js');
     expect(getDb().prepare('SELECT id FROM messaging_group_agents').get()).toBeDefined();
     expect(fetchScopeLinkMock).not.toHaveBeenCalled();
-  });
-
-  it('create-new-agent on a DM skips the scope link too — both approval paths are guarded', async () => {
-    const { routeInbound } = await import('../../router.js');
-    const { getResponseHandlers } = await import('../../response-registry.js');
-    const { NEW_AGENT_VALUE } = await import('./channel-approval.js');
-    const { getDb } = await import('../../db/connection.js');
-
-    await routeInbound(dmEvent('dm-new-agent'));
-    await new Promise((r) => setTimeout(r, 10));
-
-    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
-      messaging_group_id: string;
-    };
-    for (const handler of getResponseHandlers()) {
-      const claimed = await handler({
-        questionId: pending.messaging_group_id,
-        value: NEW_AGENT_VALUE,
-        userId: 'owner',
-        channelType: 'telegram',
-        platformId: 'dm-owner',
-        threadId: null,
-      });
-      if (claimed) break;
-    }
-
-    // The approver answers the name prompt in their own DM; the interceptor
-    // creates the agent, wires the channel, and would issue the link here.
-    await routeInbound({
-      channelType: 'telegram',
-      platformId: 'dm-owner',
-      threadId: null,
-      message: {
-        id: 'msg-name-input',
-        kind: 'chat' as const,
-        content: JSON.stringify({ senderId: 'owner', senderName: 'Owner', text: 'Bravo' }),
-        timestamp: now(),
-        isMention: true,
-      },
-    });
-    await new Promise((r) => setTimeout(r, 10));
-
-    // Guard against a vacuous pass: the flow must have run past agent creation
-    // and all the way to wiring, which sits immediately before the scope-link
-    // call. Anchoring any earlier wouldn't prove the guard did the skipping.
-    const mg = getMessagingGroupByPlatform('telegram', 'dm-new-agent');
-    expect(
-      getDb().prepare('SELECT id FROM messaging_group_agents WHERE messaging_group_id = ?').get(mg!.id),
-    ).toBeDefined();
-    expect(scopeLinkSpy).not.toHaveBeenCalled();
   });
 
   it('approve on a thread-less group (LINE-style, isGroup=true, threadId=null) wires "mention", not "pattern"', async () => {

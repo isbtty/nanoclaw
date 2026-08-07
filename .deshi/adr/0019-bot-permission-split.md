@@ -184,6 +184,20 @@ Slack 起点の依頼は Slack の admin に届く。ただし到達判定に `e
    素通し」という escape hatch (isbtty/boswell#677) のおかげで、secret 検証を通る経路だけが
    死んでいた。両キー (`BOSWELL_` / `DESHI_`) に正しい値を設定して解消。
 
+## 受容したリスク — 実装完了時にまとめて再確認する
+
+設計・実装の過程で「今は目を瞑る」と判断したものの一覧。実装が一通り終わった時点で
+この節を上から見直し、依然として受容できるか / 対策を入れるかを判断する。
+
+| # | リスク | 現在の扱い | 再確認の観点 |
+|---|---|---|---|
+| 1 | **乗っ取られた container が同席者になりすます**。inbound.db は container から読めるため、prompt injection で他人のメッセージを「処理中」と印を付ければその人として振る舞える (ADR-0020) | 受容。sender token が消せるのは事故による取り違えと、TTL による古い発言の再利用まで | tier A が公開ルームに直接書ける構成なので、injection の入口は実在する。container 隔離側で緩和できるか |
+| 2 | **`cli_scope='global'` を持つ agent group は実質「特権経路」**。cli_scope は agent group 単位でユーザー単位ではない | 受容。特権admin とチャンネル内admin の差は sender token 判定で付ける | その group のメンバーシップを誰が変更できるかを塞げているか |
+| 3 | **Slack Channel Manager の API 取得可否が未確認**。admin 系 API が使えないプランでは `creator` へフォールバックする | 未確認のまま設計 | 対象ワークスペースのプランを確認し、フォールバックで実運用に耐えるか |
+| 4 | **instance サフィックスは運用開始後に改名不可**。改名すると `messaging_groups` 行と Chat SDK state が orphan 化する | 受容。命名を最初に確定させる運用でカバー | セットアップスキルが命名を固定できているか |
+| 5 | **`slack.ts` ミラーのドリフト** (ADR-0018 制約 4)。upstream 更新が named instance に自動追随しない | 受容。`/deshi-update-from-upstream` のチェックリストで人間が確認 | チェックリストに項目が入っているか |
+| 6 | **知識検索BOT は scope 未設定の間、何も答えられない**。deny-by-default | 意図した挙動 | 新規ルームのたびに owner がボトルネックにならないか |
+
 ## 不採用案
 
 - **(a) 単一 BOT + per-user tier (#642 の Role tier 軸)**: boswell に senderId を渡す passthrough 拡張が前提で、
