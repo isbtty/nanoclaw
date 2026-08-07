@@ -1,5 +1,5 @@
 ---
-name: deshi-add-host-tools
+name: boswell-add-host-tools
 description: container 内 agent が host 側を叩くための deshi host-tools MCP bridge を agent group に追加する。`mcp__deshi__*` namespace 経由で、host 上で動く Node HTTP server (default `http://127.0.0.1:5180`) に forward される。deshi の handler (`health`、将来の `daemon_*` / `tool_*` カテゴリ) を NanoClaw の agent group に配線したい時に使う。
 ---
 
@@ -309,7 +309,7 @@ rm -f ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist
 ncl groups restart --id "$GROUP_ID"
 ```
 
-ソースファイル (`src/deshi/host-tools-server.ts`, `.claude/skills/deshi-add-host-tools/`, `container/skills/deshi-add-host-tools/`, `setup/launchd/com.isbtty.nanoclaw.host-tools.plist`) は repo に commit されているので削除しない。
+ソースファイル (`src/deshi/host-tools-server.ts`, `.claude/skills/boswell-add-host-tools/`, `container/skills/deshi-add-host-tools/`, `setup/launchd/com.isbtty.nanoclaw.host-tools.plist`) は repo に commit されているので削除しない。
 
 ## トラブルシュート
 

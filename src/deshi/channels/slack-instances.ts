@@ -11,7 +11,7 @@
  *    permalink enrichment / resolveChannelName / fetchThreadBackfill の
  *    組み立てを同一に保つこと。upstream で `src/channels/slack.ts` に diff が
  *    入ったら、本ファイルへ反映が必要か必ず差分確認すること
- *    (`/deshi-update-from-upstream` のチェックリスト参照)。
+ *    (`/boswell-update-from-upstream` のチェックリスト参照)。
  *
  * ミラー方針: `slack-permalink.js` / `chat-sdk-bridge.js` はコピーせず import
  * して再利用する。ミラーするのは factory 本体の約 40 行のみ。

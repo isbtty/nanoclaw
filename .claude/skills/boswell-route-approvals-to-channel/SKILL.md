@@ -1,11 +1,11 @@
 ---
-name: deshi-route-approvals-to-channel
+name: boswell-route-approvals-to-channel
 description: 承認/許可通知(未知sender・channel招待・知識スコープ編集リンク)を owner/admin 個人 DM ではなく共有 Slack チャンネルに集約する配線スキル。user_dms リダイレクト方式でコア非改修。owner/admin が同じチャンネルで共同承認できるようにする (project)
 user-invocable: true
 allowed-tools: Bash, Read, AskUserQuestion
 ---
 
-# `/deshi-route-approvals-to-channel` — 承認通知を共有チャンネルに集約
+# `/boswell-route-approvals-to-channel` — 承認通知を共有チャンネルに集約
 
 ## 概要
 
@@ -24,7 +24,7 @@ owner/admin の `user_dms` 行を共有チャンネルの messaging_group に向
 ### 前提
 
 - **admin 権限の付与が先**（チャンネルに出ても押せるのは owner/admin だけ）。
-  未付与なら先に `/deshi-manage-nanoclaw-admins grant` で admin を揃える。
+  未付与なら先に `/boswell-manage-nanoclaw-admins grant` で admin を揃える。
 - Slack channel が導入済み（`/add-slack` 済み）。deshi#517 は **Slack 単一が前提**。
 - このスキルは **nanoclaw host 上（Mac mini）で operator が実行**する。
 
@@ -74,7 +74,7 @@ pnpm exec tsx src/deshi/approvals-channel/run.ts C01ABCDEF --name "承認"
 - 末尾の `--- 現在の user_dms ---` で各 approver が `[GROUP <CHANNEL_ID>]` を指しているか
 
 `redirected` が空なら → owner/admin に `slack:Uxxx` identity が無い。
-`/deshi-manage-nanoclaw-admins grant` で slack identity 付きの admin を用意してから再実行。
+`/boswell-manage-nanoclaw-admins grant` で slack identity 付きの admin を用意してから再実行。
 
 ### 3. 実機検証（ゴール基準）
 
@@ -98,5 +98,5 @@ pnpm exec tsx scripts/q.ts data/v2.db \
 ## 関連
 
 - 配線ヘルパ: `src/deshi/approvals-channel/wire.ts` / CLI: `run.ts`
-- 権限管理（誰が承認できるか）: `/deshi-manage-nanoclaw-admins`
+- 権限管理（誰が承認できるか）: `/boswell-manage-nanoclaw-admins`
 - 設計: isbtty/deshi#517

@@ -70,8 +70,14 @@ describe('handleKnowledgeScopeCommand', () => {
     expect(maybeDeliverScopeLinkMock).toHaveBeenCalledWith('ag-1', 'mg-1', 'line:Uowner');
   });
 
-  it('matches the skill name typed directly (with/without slash and deshi- prefix)', async () => {
-    for (const text of ['deshi-update-knowledge-scope', '/deshi-update-knowledge-scope', 'update-knowledge-scope']) {
+  it('matches the skill name typed directly (with/without slash and boswell-/legacy deshi- prefix)', async () => {
+    for (const text of [
+      'boswell-update-knowledge-scope',
+      '/boswell-update-knowledge-scope',
+      'deshi-update-knowledge-scope',
+      '/deshi-update-knowledge-scope',
+      'update-knowledge-scope',
+    ]) {
       maybeDeliverScopeLinkMock.mockClear();
       const handled = await handleKnowledgeScopeCommand(inputWith(text));
       expect(handled, text).toBe(true);

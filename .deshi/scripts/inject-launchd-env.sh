@@ -69,7 +69,7 @@ fi
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "ERROR: $ENV_FILE not found" >&2
   echo "  Create it with BOSWELL_DAEMON_URL and BOSWELL_DAEMON_DEVICE_SECRET" >&2
-  echo "  per the deshi-add-host-tools skill (deshi repo)." >&2
+  echo "  per the boswell-add-host-tools skill (deshi repo)." >&2
   exit 1
 fi
 
@@ -125,7 +125,7 @@ fi
 if [[ -n "$SECRET" ]]; then
   plutil -replace 'EnvironmentVariables.DESHI_DAEMON_DEVICE_SECRET' -string "$SECRET" "$PLIST"
   echo "  set EnvironmentVariables.DESHI_DAEMON_DEVICE_SECRET"
-  # 秘密が入ったので 600 に絞る (deshi-add-host-tools skill の host-tools plist
+  # 秘密が入ったので 600 に絞る (boswell-add-host-tools skill の host-tools plist
   # と同じ convention)。
   chmod 600 "$PLIST"
 fi

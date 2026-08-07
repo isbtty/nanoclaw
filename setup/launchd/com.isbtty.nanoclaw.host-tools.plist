@@ -15,7 +15,7 @@
   and load it with:
     launchctl load ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist
 
-  See .claude/skills/deshi-add-host-tools/SKILL.md for the full setup flow.
+  See .claude/skills/boswell-add-host-tools/SKILL.md for the full setup flow.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
