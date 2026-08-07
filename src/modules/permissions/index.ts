@@ -526,7 +526,17 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 
   // Follow up with the knowledge-scope onboarding link (isbtty/deshi#396).
   // Best-effort + deshi-gated: a failure here doesn't block the replay below.
-  await maybeDeliverScopeLink(targetAgentGroupId, row.messaging_group_id, approverId);
+  // Shared channels only: a DM's channel scope would open knowledge inside one
+  // person's private chat, which nobody asks for by DMing the bot.
+  // `/update-knowledge-scope` still mints one on explicit request.
+  if (isGroup) {
+    await maybeDeliverScopeLink(targetAgentGroupId, row.messaging_group_id, approverId);
+  } else {
+    log.debug('Scope-link skipped — direct message, not a shared channel', {
+      messagingGroupId: row.messaging_group_id,
+      agentGroupId: targetAgentGroupId,
+    });
+  }
 
   try {
     await routeInbound(event);
@@ -656,7 +666,15 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
 
   // Knowledge-scope onboarding link (isbtty/deshi#396). Gated on the new agent
   // group using the deshi MCP server, so this is a no-op unless it was created
-  // deshi-backed; harmless either way.
-  await maybeDeliverScopeLink(ag.id, row.messaging_group_id, row.approver_user_id);
+  // deshi-backed; harmless either way. Shared channels only, same as the
+  // connect-to-existing path above.
+  if (isGroup) {
+    await maybeDeliverScopeLink(ag.id, row.messaging_group_id, row.approver_user_id);
+  } else {
+    log.debug('Scope-link skipped — direct message, not a shared channel', {
+      messagingGroupId: row.messaging_group_id,
+      agentGroupId: ag.id,
+    });
+  }
   return true;
 });

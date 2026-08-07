@@ -36,6 +36,28 @@ vi.mock('../../delivery.js', () => ({
   getDeliveryAdapter: () => ({ deliver: deliverMock }),
 }));
 
+// Mock the scope-link mint — an outbound HTTP call to the deshi daemon.
+const fetchScopeLinkMock = vi.fn().mockResolvedValue({ url: 'https://scope.test/abc', token: 'tok' });
+vi.mock('../../deshi/fetch-scope-link.js', () => ({
+  fetchDeshiScopeLink: (channelId: string) => fetchScopeLinkMock(channelId),
+}));
+
+// Spy on the scope-link helper while keeping the real implementation. The
+// create-new-agent path builds a group with no deshi MCP, so the helper is a
+// no-op there either way — only a call-level spy separates "guarded" from
+// "called but did nothing".
+const scopeLinkSpy = vi.fn();
+vi.mock('./channel-scope-link.js', async () => {
+  const actual = await vi.importActual<typeof import('./channel-scope-link.js')>('./channel-scope-link.js');
+  return {
+    ...actual,
+    maybeDeliverScopeLink: (...args: Parameters<typeof actual.maybeDeliverScopeLink>) => {
+      scopeLinkSpy(...args);
+      return actual.maybeDeliverScopeLink(...args);
+    },
+  };
+});
+
 // Mock ensureUserDm — look up the owner's preconfigured DM row instead of
 // hitting a real openDM RPC.
 vi.mock('./user-dm.js', () => ({
@@ -102,7 +124,37 @@ beforeEach(async () => {
     .run('telegram:owner', 'telegram', 'mg-dm-owner', now());
 
   deliverMock.mockClear();
+  fetchScopeLinkMock.mockClear();
+  scopeLinkSpy.mockClear();
 });
+
+/** Make ag-1 deshi-backed so the knowledge-scope link path is live. */
+async function enableDeshiMcp() {
+  const { getDb } = await import('../../db/connection.js');
+  getDb()
+    .prepare('INSERT INTO container_configs (agent_group_id, mcp_servers, updated_at) VALUES (?, ?, ?)')
+    .run('ag-1', JSON.stringify({ deshi: { command: 'bun' } }), now());
+}
+
+/** Drive the owner's "Connect to Andy" click for the one pending approval. */
+async function approvePending() {
+  const { getDb } = await import('../../db/connection.js');
+  const { getResponseHandlers } = await import('../../response-registry.js');
+  const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+    messaging_group_id: string;
+  };
+  for (const handler of getResponseHandlers()) {
+    const claimed = await handler({
+      questionId: pending.messaging_group_id,
+      value: 'connect:ag-1',
+      userId: 'owner',
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+    });
+    if (claimed) break;
+  }
+}
 
 afterEach(() => {
   closeDb();
@@ -296,6 +348,85 @@ describe('unknown-channel registration flow', () => {
       .get(pending.messaging_group_id) as { engage_mode: string; engage_pattern: string };
     expect(mga.engage_mode).toBe('pattern');
     expect(mga.engage_pattern).toBe('.');
+  });
+
+  it('approve on a shared channel hands the owner a knowledge-scope setup link', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await enableDeshiMcp();
+
+    await routeInbound(groupMention('chat-scope-link'));
+    await new Promise((r) => setTimeout(r, 10));
+    await approvePending();
+
+    expect(fetchScopeLinkMock).toHaveBeenCalledWith('chat-scope-link');
+    // Positive side of the spy used by the create-new-agent test below: if the
+    // interception ever stops working, that test would pass vacuously.
+    expect(scopeLinkSpy).toHaveBeenCalled();
+  });
+
+  it('approve on a DM hands out no knowledge-scope link — a private chat is nobody’s knowledge scope', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await enableDeshiMcp();
+
+    await routeInbound(dmEvent('dm-scope-link'));
+    await new Promise((r) => setTimeout(r, 10));
+    await approvePending();
+
+    // The approval must have reached wiring — otherwise "no link" proves nothing.
+    expect(getMessagingGroupByPlatform('telegram', 'dm-scope-link')).toBeDefined();
+    const { getDb } = await import('../../db/connection.js');
+    expect(getDb().prepare('SELECT id FROM messaging_group_agents').get()).toBeDefined();
+    expect(fetchScopeLinkMock).not.toHaveBeenCalled();
+  });
+
+  it('create-new-agent on a DM skips the scope link too — both approval paths are guarded', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { getResponseHandlers } = await import('../../response-registry.js');
+    const { NEW_AGENT_VALUE } = await import('./channel-approval.js');
+    const { getDb } = await import('../../db/connection.js');
+
+    await routeInbound(dmEvent('dm-new-agent'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+      messaging_group_id: string;
+    };
+    for (const handler of getResponseHandlers()) {
+      const claimed = await handler({
+        questionId: pending.messaging_group_id,
+        value: NEW_AGENT_VALUE,
+        userId: 'owner',
+        channelType: 'telegram',
+        platformId: 'dm-owner',
+        threadId: null,
+      });
+      if (claimed) break;
+    }
+
+    // The approver answers the name prompt in their own DM; the interceptor
+    // creates the agent, wires the channel, and would issue the link here.
+    await routeInbound({
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+      message: {
+        id: 'msg-name-input',
+        kind: 'chat' as const,
+        content: JSON.stringify({ senderId: 'owner', senderName: 'Owner', text: 'Bravo' }),
+        timestamp: now(),
+        isMention: true,
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Guard against a vacuous pass: the flow must have run past agent creation
+    // and all the way to wiring, which sits immediately before the scope-link
+    // call. Anchoring any earlier wouldn't prove the guard did the skipping.
+    const mg = getMessagingGroupByPlatform('telegram', 'dm-new-agent');
+    expect(
+      getDb().prepare('SELECT id FROM messaging_group_agents WHERE messaging_group_id = ?').get(mg!.id),
+    ).toBeDefined();
+    expect(scopeLinkSpy).not.toHaveBeenCalled();
   });
 
   it('approve on a thread-less group (LINE-style, isGroup=true, threadId=null) wires "mention", not "pattern"', async () => {
