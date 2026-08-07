@@ -36,8 +36,11 @@ boswell daemon 側で per-user のゲートを掛けられない。#642 自身�
 
 - **既存の挙動は一切変えない。** 既存の agent group / messaging group / 承認ルーティングは無変更で動き続ける。
 - 挙動が変わるのは、**セットアップスキルが作った / 明示的に登録した対象に限る**。判定は
-  グローバルな env フラグではなく、**その agent group がセットアップ済みかどうか**で行う
-  (セットアップ時に deshi 層のテーブルへ登録し、以降の分岐はその有無を見る)。
+  グローバルな env フラグではなく、**その agent group がセットアップ済みかどうか**で行う。
+  実体は `permission_split_groups` テーブル (migration 021) と
+  `src/deshi/permission-split.ts` の `isPermissionSplitGroup()`。**分岐を入れる側は必ず
+  これを通し、false のときは従来どおりの経路をそのまま走らせること。**
+  行が無い agent group は従来運用のまま — 同じ host 上で両方が併存する。
 - 知識検索BOT の instance は ADR-0018 の env 宣言が無ければそもそも登録されないので、
   導入していない環境では BOT 自体が存在しない。
 
