@@ -196,6 +196,7 @@ Slack 起点の依頼は Slack の admin に届く。ただし到達判定に `e
 |---|---|---|---|
 | 1 | **乗っ取られた container が同席者になりすます**。inbound.db は container から読めるため、prompt injection で他人のメッセージを「処理中」と印を付ければその人として振る舞える (ADR-0020) | 受容。sender token が消せるのは事故による取り違えと、TTL による古い発言の再利用まで | tier A が公開ルームに直接書ける構成なので、injection の入口は実在する。container 隔離側で緩和できるか |
 | 2 | **`cli_scope='global'` を持つ agent group は実質「特権経路」**。cli_scope は agent group 単位でユーザー単位ではない | 受容。特権admin とチャンネル内admin の差は sender token 判定で付ける | その group のメンバーシップを誰が変更できるかを塞げているか |
+| 2b | **host 実行に落とせばゲートを通らない**。container が `daemon_run_skill` で boswell daemon に skill 実行を投げると、host 上で起動した Claude が `ncl` を `caller: 'host'` として叩ける。`dispatch` のゲートは `caller !== 'host'` のときだけ走るため、`--group` 無しの `roles grant` で global admin を発行できる | 受容。本設計以前から存在する経路で、boswell daemon 側 (別 repo) の実行許可にも依存する | ゲートを caller に依らず効かせるか、host 実行経路から `ncl` の権限操作を落とすか |
 | 3 | **Slack Channel Manager の API 取得可否が未確認**。admin 系 API が使えないプランでは `creator` へフォールバックする | 未確認のまま設計 | 対象ワークスペースのプランを確認し、フォールバックで実運用に耐えるか |
 | 4 | **instance サフィックスは運用開始後に改名不可**。改名すると `messaging_groups` 行と Chat SDK state が orphan 化する | 受容。命名を最初に確定させる運用でカバー | セットアップスキルが命名を固定できているか |
 | 5 | **`slack.ts` ミラーのドリフト** (ADR-0018 制約 4)。upstream 更新が named instance に自動追随しない | 受容。`/deshi-update-from-upstream` のチェックリストで人間が確認 | チェックリストに項目が入っているか |

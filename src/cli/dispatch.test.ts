@@ -59,6 +59,14 @@ vi.mock('../modules/approvals/index.js', () => ({
   requestApproval: approvalState.requestApproval,
 }));
 
+// 権限分離ゲートは中央 DB を引くが、本ファイルは DB を立てずに dispatch の
+// scope 制御だけを見る。常に 'defer' = 従来どおり承認カードへ、として無効化する。
+// ゲート自体の検証は src/deshi/permission-gate.test.ts。
+vi.mock('../deshi/permission-gate.js', () => ({
+  decideAgentRequest: () => ({ action: 'defer' }),
+  allowsResourceUnderGroupScope: () => false,
+}));
+
 // Register a test command so dispatch has something to find
 import { register } from './registry.js';
 
