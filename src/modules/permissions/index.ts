@@ -44,6 +44,7 @@ import {
 } from './channel-approval.js';
 import { maybeDeliverScopeLink } from './channel-scope-link.js';
 import { skipsDmScopeLink } from '../../deshi/permission-split.js';
+import { runChannelAutoSetup } from '../../deshi/channel-auto-setup.js';
 import { addMember } from './db/agent-group-members.js';
 import {
   deletePendingChannelApproval,
@@ -525,8 +526,13 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 
   deletePendingChannelApproval(row.messaging_group_id);
 
+  // 権限分離運用の host なら、続けて配線する (.deshi/adr/0019 §5.2)。
+  // そうでなければ何も起きない。内部で全例外を握るので replay を止めない。
+  await runChannelAutoSetup(targetAgentGroupId, row.messaging_group_id, approverId);
+
   // Follow up with the knowledge-scope onboarding link (isbtty/deshi#396).
   // Best-effort + deshi-gated: a failure here doesn't block the replay below.
+
   if (skipsDmScopeLink(targetAgentGroupId, isGroup)) {
     log.debug('Scope-link skipped — direct message under permission split', {
       messagingGroupId: row.messaging_group_id,
@@ -669,6 +675,7 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   // DM の抑止 (skipsDmScopeLink) はここには要らない。この経路で作られる agent
   // group は boswell MCP を持たないため maybeDeliverScopeLink 自体が no-op で、
   // 抑止すべき発行がそもそも起きない。
+  await runChannelAutoSetup(ag.id, row.messaging_group_id, row.approver_user_id);
   await maybeDeliverScopeLink(ag.id, row.messaging_group_id, row.approver_user_id);
   return true;
 });

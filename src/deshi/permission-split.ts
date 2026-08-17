@@ -43,3 +43,54 @@ export function enablePermissionSplit(agentGroupId: string): void {
 export function skipsDmScopeLink(agentGroupId: string, isGroup: boolean): boolean {
   return !isGroup && isPermissionSplitGroup(agentGroupId);
 }
+
+// ── host 単位の設定 (ADR-0019 §5.1) ──
+
+export interface PermissionSplitConfig {
+  /** 知識検索BOT の agent group。招待先の解決に使う。 */
+  knowledge_agent_group_id: string;
+  /** 知識検索BOT の instance 名 (`slack-<suffix>`)。先回り配線の宛先に使う。 */
+  knowledge_instance: string;
+  /** 知識検索BOT の Slack user id。チャンネル招待に使う。取得できていなければ null。 */
+  knowledge_bot_user_id: string | null;
+  enabled_at: string;
+}
+
+/**
+ * この host が権限分離運用か。行が無ければ `null` = 従来運用。
+ *
+ * agent group 単位の {@link isPermissionSplitGroup} とは層が違う。チャンネル登録の
+ * 時点ではそのチャンネルの agent group がまだ無いので、そこでの分岐はこちらを見る。
+ */
+export function getPermissionSplitConfig(): PermissionSplitConfig | null {
+  const row = getDb().prepare('SELECT * FROM permission_split_config WHERE id = 1').get() as
+    | PermissionSplitConfig
+    | undefined;
+  return row ?? null;
+}
+
+/** 初回セットアップから呼ぶ。既に有れば上書きする (冪等)。 */
+export function setPermissionSplitConfig(config: {
+  knowledgeAgentGroupId: string;
+  knowledgeInstance: string;
+  /** 省略時は既存の値を保つ。再実行で黙って自動招待が無効化されないように。 */
+  knowledgeBotUserId?: string | null;
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO permission_split_config
+         (id, knowledge_agent_group_id, knowledge_instance, knowledge_bot_user_id, enabled_at)
+       VALUES (1, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         knowledge_agent_group_id = excluded.knowledge_agent_group_id,
+         knowledge_instance       = excluded.knowledge_instance,
+         knowledge_bot_user_id    = COALESCE(excluded.knowledge_bot_user_id, permission_split_config.knowledge_bot_user_id),
+         enabled_at               = excluded.enabled_at`,
+    )
+    .run(
+      config.knowledgeAgentGroupId,
+      config.knowledgeInstance,
+      config.knowledgeBotUserId ?? null,
+      new Date().toISOString(),
+    );
+}
