@@ -35,11 +35,14 @@ boswell daemon 側で per-user のゲートを掛けられない。#642 自身�
 したがって:
 
 - **既存の挙動は一切変えない。** 既存の agent group / messaging group / 承認ルーティングは無変更で動き続ける。
-- 挙動が変わるのは、**セットアップスキルが作った / 明示的に登録した対象に限る**。判定は
-  グローバルな env フラグではなく、**その agent group がセットアップ済みかどうか**で行う。
-  実体は `permission_split_groups` テーブル (migration 021) と
-  `src/deshi/permission-split.ts` の `isPermissionSplitGroup()`。**分岐を入れる側は必ず
-  これを通し、false のときは従来どおりの経路をそのまま走らせること。**
+- 挙動が変わるのは、**セットアップを通った対象に限る**。判定は env フラグではなく DB で行い、
+  2 段になっている (詳細は §5.1):
+  **host が権限分離運用か** (`permission_split_config`、1 行だけの設定) と、
+  **その agent group が権限分離済みか** (`permission_split_groups`)。
+  個々の分岐 (DM の scope-link 抑止、権限操作の即時実行) が見るのは後者で、実体は
+  `permission_split_groups` テーブル (migration 021) と `src/deshi/permission-split.ts` の
+  `isPermissionSplitGroup()`。**分岐を入れる側は必ずこれを通し、false のときは従来どおりの
+  経路をそのまま走らせること。**
   行が無い agent group は従来運用のまま — 同じ host 上で両方が併存する。
 - 知識検索BOT の instance は ADR-0018 の env 宣言が無ければそもそも登録されないので、
   導入していない環境では BOT 自体が存在しない。
@@ -100,32 +103,82 @@ deny-by-default なので、DM の channelId に scope を設定しなければ*
 
 この host-tool は **channelId を引数で受け取らない**。host 側で ADR-0020 の sender token から解決する。
 
-### 5. チャンネルのセットアップ
+### 5. チャンネルのセットアップ — 既存の承認フローに相乗りする
 
-BOT をチャンネルに招待する行為自体は誰でもできる。ただし**セットアップされるまで BOT は完全に無反応**とする
-(未配線チャンネルでの一般ユーザーの発言には一切応答しない。承認カードも出さない)。
+**セットアップ専用の合言葉は用意しない。** チャンネル登録の承認フローが完了した時点で、
+必要な配線を host が自動で続けて行う。
 
-**特権admin がそのチャンネル内で「セットアップして」と依頼したときだけ**セットアップが走り、以下を行う:
+理由は 2 つ:
 
-1. そのチャンネル専用の agent group 作成 + wiring
-2. 知識検索BOT が未招待なら `conversations.invite` で自動招待 (できなければ招待を依頼するメッセージを出す)
-3. チャンネル管理者と特権admin に scoped admin を付与
-4. **承認カード / スコープ編集リンクの配送先を Slack 側に切り替える。** 既存環境は Telegram 等に
-   配線されている場合があるため、セットアップ対象のユーザーについてのみ `user_dms` を Slack の
-   DM (または owner/admin 専用チャンネル) に張り替える。手法は既存スキル
-   `/deshi-route-approvals-to-channel` と同じ `user_dms` リダイレクト方式で、コアは改修しない。
-   既存ユーザーの `user_dms` 行は触らない。
+- **承認カードを押せるのは owner/admin だけ**なので、承認の完了そのものが「特権admin の意思表示」に
+  なっている。別途の合言葉も本人確認も要らない
+- 招待 → メンション → 承認 → 返事、という既存の導線に乗るので、利用者が覚えることが増えない
+
+#### 5.1 host 単位のフラグ
+
+「この host が権限分離運用か」を **host 単位** (agent group 単位ではなく) で持つ。
+
+```
+permission_split_config  … 1 行だけの設定
+  knowledge_agent_group_id   知識検索BOT の agent group (招待先の解決に使う)
+  knowledge_instance         slack-<suffix>
+  enabled_at
+```
+
+行が有る = この host に生える BOT は既定で権限分離前提。行が無ければ従来運用のまま。
+この行は **§5.3 の初回セットアップ (host 上で operator が実行) でだけ**作られる。
+
+agent group 単位の `permission_split_groups` (§0) との関係:
+
+- `permission_split_config` … **この host が権限分離運用か**。チャンネル登録時の分岐に使う
+- `permission_split_groups` … **その agent group が権限分離済みか**。個々の判定 (DM の scope-link
+  抑止、権限操作の即時実行) に使う
+
+チャンネル登録の時点ではそのチャンネルの agent group がまだ存在しないため、前者が要る。
+
+#### 5.2 チャンネル登録時に host が自動で行うこと
+
+チャンネル登録の承認 (`handleChannelApprovalResponse`) が wiring を作った直後、
+`permission_split_config` の行が有れば続けて:
+
+1. その agent group を `permission_split_groups` に登録
+2. 承認した特権admin と、チャンネル管理者に scoped admin を付与
+3. 知識検索BOT をそのチャンネルに招待 (`conversations.invite`)
+4. 承認カード / スコープ編集リンクの配送先を Slack 側に切り替える (`user_dms` リダイレクト、
+   対象ユーザーの行だけ。既存ユーザーの行は触らない)
+5. **チャンネルに完了を投稿する**。host からチャンネルへの投稿は `writeOutboundDirect` で行う
+   (既存例: `src/router.ts` の admin コマンド拒否メッセージ)
+
+行が無ければ 1〜5 を丸ごと飛ばし、従来どおりの挙動になる。
+
+知識検索BOT の可視範囲 (`ChannelScopeStore`) の設定はここに含めず、後から
+`/update-knowledge-scope` で行う。deny-by-default なので、設定するまで知識検索BOT は何も答えられない。
+
+チャンネル管理者の特定は、Slack の admin 系 API が使えるなら Channel Manager、使えないなら
+`conversations.info` の `creator` を候補にする。どちらも取れなければ特権admin だけを admin にして、
+チャンネルへの完了投稿で「管理者を追加するには @Bot に依頼してください」と案内する。
+
+#### 5.3 初回セットアップ (host 上、operator が実行)
+
+host 1 台につき 1 回だけ行う。ここで `permission_split_config` の行が作られる。
+
+1. 前提チェック — `/add-slack` 済みか、Slack App のスコープが足りているか。
+   **不足していれば何も変更せず、不足分を提示して停止する**
+2. 2 つ目の Slack App の作成とインストール (**手作業**) → token を受け取る
+3. `.env` に `DESHI_SLACK_WORKSPACES` サフィックスと `SLACK_BOT_TOKEN_<S>` / `SLACK_APP_TOKEN_<S>` を追記
+4. host 再起動、instance が起動したことをログで確認
+5. 知識検索BOT 用の agent group 作成 + `container.json` (§4 の host-tool だけ)
+6. 導入者を特権admin として登録
+7. `permission_split_config` に行を作る
+
+Slack App の作成だけ手作業に残すのは、App Manifest API に configuration token (`xoxe-`) が要り、
+それ自体が管理画面での発行作業で 12 時間で失効するため。自動化しても手作業が消えない。
+加えて App の追加はワークスペースに対して不可逆に近いので、人が確認しながら行う方が安全。
 
 `pickApprovalDelivery` は元々「依頼元と同じ channel_type の承認者を優先」する実装なので、
 Slack 起点の依頼は Slack の admin に届く。ただし到達判定に `ensureUserDm` (= `conversations.open`) を
 使うため、**Slack App に `im:write` スコープが無いと Slack の admin が到達不能と判定され、
-他プラットフォームの承認者にフォールバックする** (実測で確認済み)。スコープはセットアップの前提条件とする。
-
-チャンネル管理者の特定は、Slack の admin 系 API が使えるなら Channel Manager、使えないなら
-`conversations.info` の `creator` を候補として提示し、最終的にセットアップ対話で指名して確定する。
-
-知識検索BOT の可視範囲 (`ChannelScopeStore`) の設定はセットアップに含めず、後から
-`/update-knowledge-scope` で行う。deny-by-default なので、設定するまで知識検索BOT は何も答えられない。
+他プラットフォームの承認者にフォールバックする** (実測で確認済み)。スコープは前提条件とする。
 
 ### 6. 権限の付与・剥奪
 
