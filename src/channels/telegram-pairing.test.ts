@@ -70,13 +70,31 @@ describe('createPairing', () => {
     expect(r.status).toBe('pending');
   });
 
-  it('does not collide with active codes', async () => {
-    const codes = new Set<string>();
-    for (let i = 0; i < 20; i++) {
-      const r = await createPairing('main');
-      expect(codes.has(r.code)).toBe(false);
-      codes.add(r.code);
-    }
+  describe('collision avoidance', () => {
+    // 0.12345 / 0.98765 are bucket midpoints so floor() lands on 1234 / 9876
+    // whichever way the float rounds.
+    let randomSpy: ReturnType<typeof vi.spyOn>;
+    afterEach(() => randomSpy?.mockRestore());
+
+    it('redraws when the generated code is already pending', async () => {
+      randomSpy = vi
+        .spyOn(Math, 'random')
+        .mockReturnValueOnce(0.12345)
+        .mockReturnValueOnce(0.12345)
+        .mockReturnValueOnce(0.98765);
+      // Distinct intents — same-intent pairings supersede each other, which
+      // would leave no pending code to collide with.
+      const first = await createPairing({ kind: 'wire-to', folder: 'work' });
+      const second = await createPairing({ kind: 'wire-to', folder: 'side' });
+      expect(first.code).toEqual('1234');
+      expect(second.code).toEqual('9876');
+    });
+
+    it('gives up when no free code can be drawn', async () => {
+      randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.12345);
+      await createPairing({ kind: 'wire-to', folder: 'work' });
+      await expect(createPairing({ kind: 'wire-to', folder: 'side' })).rejects.toThrow(/Could not allocate/);
+    });
   });
 });
 
