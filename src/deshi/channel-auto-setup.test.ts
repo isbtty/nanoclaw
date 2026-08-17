@@ -42,7 +42,6 @@ async function enableHost(botUserId: string | null = 'UKNOWBOT') {
   const { setPermissionSplitConfig } = await import('./permission-split.js');
   setPermissionSplitConfig({
     knowledgeAgentGroupId: KNOWLEDGE_AG,
-    knowledgeInstance: 'slack-knowledge',
     knowledgeBotUserId: botUserId,
   });
 }
@@ -72,7 +71,6 @@ beforeEach(() => {
   createAgentGroup({ id: KNOWLEDGE_AG, name: 'Know', folder: 'know', agent_provider: null, created_at: now() });
   createChannel('mg-1', 'slack:C1');
   upsertUser({ id: APPROVER, kind: 'slack', display_name: 'Admin', created_at: now() });
-  upsertUser({ id: 'slack:CREATOR', kind: 'slack', display_name: 'Creator', created_at: now() });
 });
 
 afterEach(() => {
@@ -124,6 +122,38 @@ describe('チャンネル登録の承認に続けて行うセットアップ', (
 
       expect(await adminGroupsOf(APPROVER)).toEqual([CHANNEL_AG]);
       expect(deliver).toHaveBeenCalled();
+    });
+
+    it('bot と話したことがないチャンネル作成者でも、管理者にできること', async () => {
+      fetchChannelCreator.mockResolvedValue('NEWCOMER');
+
+      await run();
+
+      expect(await adminGroupsOf('slack:NEWCOMER')).toEqual([CHANNEL_AG]);
+    });
+
+    it('同じチャンネルで承認が二度走っても壊れないこと', async () => {
+      fetchChannelCreator.mockResolvedValue('CREATOR');
+
+      await run();
+      await run();
+
+      expect(await adminGroupsOf(APPROVER)).toEqual([CHANNEL_AG]);
+      expect(await adminGroupsOf('slack:CREATOR')).toEqual([CHANNEL_AG]);
+    });
+
+    it('チャンネルを作った人が承認者本人なら、二重に登録しないこと', async () => {
+      fetchChannelCreator.mockResolvedValue('ADMIN');
+
+      await run();
+
+      expect(await adminGroupsOf(APPROVER)).toEqual([CHANNEL_AG]);
+    });
+
+    it('セットアップ中に失敗しても、承認フローを巻き込まないこと', async () => {
+      fetchChannelCreator.mockRejectedValue(new Error('slack down'));
+
+      await expect(run()).resolves.toBeUndefined();
     });
 
     it('知識検索BOT をそのチャンネルに招待すること', async () => {

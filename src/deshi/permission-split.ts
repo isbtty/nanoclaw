@@ -49,8 +49,6 @@ export function skipsDmScopeLink(agentGroupId: string, isGroup: boolean): boolea
 export interface PermissionSplitConfig {
   /** 知識検索BOT の agent group。招待先の解決に使う。 */
   knowledge_agent_group_id: string;
-  /** 知識検索BOT の instance 名 (`slack-<suffix>`)。 */
-  knowledge_instance: string;
   /** 知識検索BOT の Slack user id。チャンネル招待に使う。取得できていなければ null。 */
   knowledge_bot_user_id: string | null;
   enabled_at: string;
@@ -72,23 +70,17 @@ export function getPermissionSplitConfig(): PermissionSplitConfig | null {
 /** 初回セットアップから呼ぶ。既に有れば上書きする (冪等)。 */
 export function setPermissionSplitConfig(config: {
   knowledgeAgentGroupId: string;
-  knowledgeInstance: string;
   knowledgeBotUserId?: string | null;
 }): void {
   getDb()
     .prepare(
       `INSERT INTO permission_split_config
-         (id, knowledge_agent_group_id, knowledge_instance, knowledge_bot_user_id, enabled_at)
-       VALUES (1, ?, ?, ?, ?)
+         (id, knowledge_agent_group_id, knowledge_bot_user_id, enabled_at)
+       VALUES (1, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          knowledge_agent_group_id = excluded.knowledge_agent_group_id,
-         knowledge_instance       = excluded.knowledge_instance,
-         knowledge_bot_user_id    = excluded.knowledge_bot_user_id`,
+         knowledge_bot_user_id    = excluded.knowledge_bot_user_id,
+         enabled_at               = excluded.enabled_at`,
     )
-    .run(
-      config.knowledgeAgentGroupId,
-      config.knowledgeInstance,
-      config.knowledgeBotUserId ?? null,
-      new Date().toISOString(),
-    );
+    .run(config.knowledgeAgentGroupId, config.knowledgeBotUserId ?? null, new Date().toISOString());
 }

@@ -9,13 +9,19 @@
  * `permission_split_config` の行が無い host では**何もしない**。既存環境の挙動は
  * 1 ミリも変わらない (ADR-0019 §0)。
  *
- * 途中の失敗でセットアップ全体を止めない。チャンネルは既に配線済みで、ここで throw
- * しても巻き戻せないため。できたところまでを完了投稿で正直に伝える。
+ * ## 何があっても承認フローを止めない
+ *
+ * 本関数は承認 handler の途中から呼ばれ、この後に元メッセージの replay と知識スコープ
+ * リンクの配送が控えている。ここで throw すると**チャンネルは配線済みなのに replay も
+ * リンク配送も飛ぶ**という中途半端な状態になり、しかもカードは成功表示のまま残る。
+ * そのため全体を try/catch で包み、できたところまでで進む。
  */
+import { getDb } from '../db/connection.js';
 import { getMessagingGroup } from '../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../delivery.js';
 import { log } from '../log.js';
-import { grantRole } from '../modules/permissions/db/user-roles.js';
+import { upsertUser } from '../modules/permissions/db/users.js';
+import type { MessagingGroup } from '../types.js';
 import { enablePermissionSplit, getPermissionSplitConfig } from './permission-split.js';
 import { fetchChannelCreator, inviteToChannel } from './slack-workspace-api.js';
 
@@ -31,6 +37,19 @@ export async function runChannelAutoSetup(
   messagingGroupId: string,
   approverUserId: string,
 ): Promise<void> {
+  try {
+    await setUpChannel(agentGroupId, messagingGroupId, approverUserId);
+    // eslint-disable-next-line no-catch-all/no-catch-all -- 承認フローを止めないことが最優先
+  } catch (err) {
+    log.error('Channel auto-setup failed — channel stays wired without permission split', {
+      messagingGroupId,
+      agentGroupId,
+      err,
+    });
+  }
+}
+
+async function setUpChannel(agentGroupId: string, messagingGroupId: string, approverUserId: string): Promise<void> {
   const config = getPermissionSplitConfig();
   if (!config) return;
 
@@ -44,13 +63,18 @@ export async function runChannelAutoSetup(
   enablePermissionSplit(agentGroupId);
   grantScopedAdmin(approverUserId, agentGroupId, approverUserId);
 
-  const channelId = stripChannelPrefix(mg.platform_id);
-  const channelManager = await resolveChannelManager(channelId);
-  if (channelManager && channelManager !== approverUserId) {
+  const channelId = stripNamespace(mg.platform_id);
+  const workspaceReachable = isPrimaryInstance(mg);
+
+  const channelManager = workspaceReachable ? await resolveChannelManager(channelId, approverUserId) : null;
+  if (channelManager) {
     grantScopedAdmin(channelManager, agentGroupId, approverUserId);
   }
 
-  const invited = config.knowledge_bot_user_id ? await inviteToChannel(channelId, config.knowledge_bot_user_id) : false;
+  const invited =
+    workspaceReachable && config.knowledge_bot_user_id
+      ? await inviteToChannel(channelId, config.knowledge_bot_user_id)
+      : false;
 
   log.info('Channel auto-setup finished', {
     messagingGroupId,
@@ -58,78 +82,112 @@ export async function runChannelAutoSetup(
     approverUserId,
     channelManager,
     knowledgeBotInvited: invited,
+    workspaceReachable,
   });
 
-  await announce(mg.channel_type, mg.platform_id, {
-    approverUserId,
-    channelManager,
-    knowledgeBotInvited: invited,
-  });
-}
-
-/** scoped admin を付ける。既に有れば何も起きない (INSERT OR IGNORE)。 */
-function grantScopedAdmin(userId: string, agentGroupId: string, grantedBy: string): void {
-  grantRole({
-    user_id: userId,
-    role: 'admin',
-    agent_group_id: agentGroupId,
-    granted_by: grantedBy,
-    granted_at: new Date().toISOString(),
-  });
+  await announce(mg, { approverUserId, channelManager, knowledgeBotInvited: invited });
 }
 
 /**
- * チャンネル管理者を namespaced user id で返す。取れなければ `null`。
+ * scoped admin を付ける。
+ *
+ * `grantRole` を使わないのは、あちらが素の INSERT で、同じ人が同じ agent group で
+ * 2 度目の承認をすると PRIMARY KEY 違反で throw するため。ここは**同じ相手に二度
+ * 走っても壊れない**必要があるので `INSERT OR IGNORE` を使う (`ncl roles grant` と同じ)。
+ *
+ * `users` 行が無ければ先に作る。チャンネル作成者は bot と会話したことが無いのが普通で、
+ * `user_roles.user_id` の FK に引っかかる。
+ */
+function grantScopedAdmin(userId: string, agentGroupId: string, grantedBy: string): void {
+  upsertUser({
+    id: userId,
+    kind: namespaceOf(userId),
+    display_name: null,
+    created_at: new Date().toISOString(),
+  });
+  getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+       VALUES (?, 'admin', ?, ?, ?)`,
+    )
+    .run(userId, agentGroupId, grantedBy, new Date().toISOString());
+}
+
+/**
+ * チャンネル管理者を namespaced user id で返す。取れなければ、または承認者と同じなら
+ * `null`。
  *
  * Slack の「チャンネル管理者」ロールは公開 API から引けないため creator を候補にする。
  * どちらも取れない場合は特権admin だけが admin になり、あとはチャット経由で
  * 追加してもらう (ADR-0019 §5.2)。
  */
-async function resolveChannelManager(channelId: string): Promise<string | null> {
+async function resolveChannelManager(channelId: string, approverUserId: string): Promise<string | null> {
   const creator = await fetchChannelCreator(channelId);
-  return creator ? `slack:${creator}` : null;
+  if (!creator) return null;
+  const userId = `slack:${creator}`;
+  return userId === approverUserId ? null : userId;
 }
 
 /**
- * `slack:C0123` → `C0123`。messaging_groups.platform_id は channel 修飾済みだが、
- * Slack API に渡すのは素のチャンネル ID。
+ * Slack Web API を叩ける相手か。
+ *
+ * 叩くのは primary instance (管理者BOT) の bot token 固定なので、named instance の
+ * チャンネルには効かない。ADR-0019 §1 では管理者BOT が primary なので通常はここを
+ * 通るが、多ワークスペース構成 (ADR-0018) で他 instance のチャンネルが来たときに
+ * 誤った workspace を触らないよう明示的に外す。
  */
-function stripChannelPrefix(platformId: string): string {
-  const idx = platformId.indexOf(':');
-  return idx < 0 ? platformId : platformId.slice(idx + 1);
+function isPrimaryInstance(mg: MessagingGroup): boolean {
+  return mg.instance === mg.channel_type;
+}
+
+/** `slack:C0123` → `C0123`。Slack API に渡すのは素の ID。 */
+function stripNamespace(id: string): string {
+  const idx = id.indexOf(':');
+  return idx < 0 ? id : id.slice(idx + 1);
+}
+
+/** `slack:U0123` → `slack`。 */
+function namespaceOf(id: string): string {
+  const idx = id.indexOf(':');
+  return idx < 0 ? id : id.slice(0, idx);
 }
 
 /** セットアップの結果をチャンネルに投稿する。何が済んで何が残っているかを書く。 */
 async function announce(
-  channelType: string,
-  platformId: string,
+  mg: MessagingGroup,
   result: { approverUserId: string; channelManager: string | null; knowledgeBotInvited: boolean },
 ): Promise<void> {
   const adapter = getDeliveryAdapter();
   if (!adapter) return;
 
-  const lines = ['このチャンネルのセットアップが完了しました。'];
-
   const admins = [result.approverUserId, result.channelManager].filter((v): v is string => v !== null);
-  lines.push(`管理者: ${admins.map(mention).join(' ')}`);
-
-  lines.push(
+  const lines = [
+    'このチャンネルのセットアップが完了しました。',
+    `管理者: ${admins.map(mention).join(' ')}`,
     result.knowledgeBotInvited
       ? '知識検索BOT をこのチャンネルに招待しました。'
       : '知識検索BOT はこのチャンネルに招待してください。',
-  );
-  lines.push('公開する知識の範囲は、DM に届くリンクから設定してください（設定するまでは何も答えられません）。');
-  lines.push('管理者を追加するには、このチャンネルで「@対象者 に権限を付与して」と伝えてください。');
+    '公開する知識の範囲は、DM に届くリンクから設定してください（設定するまでは何も答えられません）。',
+    '管理者を追加するには、このチャンネルで「@対象者 に権限を付与して」と伝えてください。',
+  ];
 
   try {
-    await adapter.deliver(channelType, platformId, null, 'chat-sdk', JSON.stringify({ text: lines.join('\n') }));
+    await adapter.deliver(
+      mg.channel_type,
+      mg.platform_id,
+      null,
+      'chat-sdk',
+      JSON.stringify({ text: lines.join('\n') }),
+      undefined,
+      mg.instance,
+    );
     // eslint-disable-next-line no-catch-all/no-catch-all -- 投稿できなくても配線は済んでいる
   } catch (err) {
-    log.warn('Channel auto-setup announcement failed', { platformId, err });
+    log.warn('Channel auto-setup announcement failed', { platformId: mg.platform_id, err });
   }
 }
 
 /** `slack:U0123` → `<@U0123>`。Slack でメンションとして表示される形に戻す。 */
 function mention(userId: string): string {
-  return `<@${stripChannelPrefix(userId)}>`;
+  return `<@${stripNamespace(userId)}>`;
 }

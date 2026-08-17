@@ -14,6 +14,9 @@ import { log } from '../log.js';
 
 const SLACK_API = 'https://slack.com/api';
 
+/** 応答が返らないときに承認フローを巻き込まないための上限。 */
+const SLACK_API_TIMEOUT_MS = 10_000;
+
 function botToken(): string | undefined {
   return process.env.SLACK_BOT_TOKEN || readEnvFile(['SLACK_BOT_TOKEN']).SLACK_BOT_TOKEN;
 }
@@ -29,6 +32,8 @@ async function call(method: string, body: Record<string, unknown>): Promise<Reco
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify(body),
+      // タイムアウトが無いと、Slack が応答しないときに承認 handler ごと止まる。
+      signal: AbortSignal.timeout(SLACK_API_TIMEOUT_MS),
     });
     const data = (await res.json()) as Record<string, unknown>;
     if (data.ok !== true) {

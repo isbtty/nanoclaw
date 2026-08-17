@@ -526,11 +526,12 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 
   deletePendingChannelApproval(row.messaging_group_id);
 
+  // 権限分離運用の host なら、続けて配線する (.deshi/adr/0019 §5.2)。
+  // そうでなければ何も起きない。内部で全例外を握るので replay を止めない。
+  await runChannelAutoSetup(targetAgentGroupId, row.messaging_group_id, approverId);
+
   // Follow up with the knowledge-scope onboarding link (isbtty/deshi#396).
   // Best-effort + deshi-gated: a failure here doesn't block the replay below.
-  // 権限分離運用の host なら、続けて配線する (.deshi/adr/0019 §5.2)。
-  // そうでなければ何も起きない。
-  await runChannelAutoSetup(targetAgentGroupId, row.messaging_group_id, approverId);
 
   if (skipsDmScopeLink(targetAgentGroupId, isGroup)) {
     log.debug('Scope-link skipped — direct message under permission split', {
