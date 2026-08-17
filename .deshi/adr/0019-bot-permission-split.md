@@ -144,19 +144,32 @@ agent group 単位の `permission_split_groups` (§0) との関係:
 1. その agent group を `permission_split_groups` に登録
 2. 承認した特権admin と、チャンネル管理者に scoped admin を付与
 3. 知識検索BOT をそのチャンネルに招待 (`conversations.invite`)
-4. 承認カード / スコープ編集リンクの配送先を Slack 側に切り替える (`user_dms` リダイレクト、
-   対象ユーザーの行だけ。既存ユーザーの行は触らない)
-5. **チャンネルに完了を投稿する**。host からチャンネルへの投稿は `writeOutboundDirect` で行う
-   (既存例: `src/router.ts` の admin コマンド拒否メッセージ)
+4. **チャンネルに完了を投稿する**。host からチャンネルへの投稿は配送アダプタ
+   (`getDeliveryAdapter().deliver`) に instance 付きで渡す。DM 配送と同じ経路で、
+   セッションを必要としない
+
+当初案にあった「承認カードの配送先を Slack へ切り替える (`user_dms` リダイレクト)」は
+**不要と判断して落とした**。`pickApprovalDelivery` が元々「依頼元と同じ channel_type の
+承認者を優先」するため、Slack 起点の依頼は何もしなくても Slack の admin に届く
+(実機で確認済み)。`user_dms` の書き換えは既存の配送先を壊しうる操作なので、
+効果が重複する以上やらない。
+
+なお 1〜4 のどこで失敗しても**承認フロー自体は止めない**。この処理は承認 handler の
+途中から呼ばれ、後段に元メッセージの replay と知識スコープリンクの配送が控えている。
+throw するとチャンネルは配線済みなのにそれらが飛び、カードだけ成功表示で残る。
 
 行が無ければ 1〜5 を丸ごと飛ばし、従来どおりの挙動になる。
 
 知識検索BOT の可視範囲 (`ChannelScopeStore`) の設定はここに含めず、後から
 `/update-knowledge-scope` で行う。deny-by-default なので、設定するまで知識検索BOT は何も答えられない。
 
-チャンネル管理者の特定は、Slack の admin 系 API が使えるなら Channel Manager、使えないなら
-`conversations.info` の `creator` を候補にする。どちらも取れなければ特権admin だけを admin にして、
+チャンネル管理者の特定は `conversations.info` の `creator` を使う。Slack の「チャンネル管理者」
+ロールは公開 Web API から一覧できないため。取れなければ特権admin だけを admin にして、
 チャンネルへの完了投稿で「管理者を追加するには @Bot に依頼してください」と案内する。
+
+チャンネル情報の取得と知識検索BOT の招待は chat-sdk のアダプタが公開していないため、
+host から Slack Web API を直接叩く。使うのは primary instance の bot token なので、
+**named instance のチャンネルでは試みない** (誤った workspace を触らないため)。
 
 #### 5.3 初回セットアップ (host 上、operator が実行)
 
