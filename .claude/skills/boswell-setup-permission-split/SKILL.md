@@ -32,8 +32,11 @@ allowed-tools: Bash, Read, Edit, AskUserQuestion
 
 1. `/add-slack` 済みか — `.env` に `SLACK_BOT_TOKEN` があること
 2. `src/deshi/channels/slack-instances.ts` があること (無ければ ADR-0018 が未取込)
-3. 管理者BOT 側のスコープ — 少なくとも `im:write` (承認カードの DM 配送) と
-   `channels:read` / `channels:manage` (チャンネル情報の取得と知識検索BOT の招待)
+3. 管理者BOT 側のスコープ:
+   - `im:write` — 承認カードの DM 配送
+   - `channels:read` — チャンネル情報 (作成者) の取得
+   - `channels:manage` — public チャンネルへの知識検索BOT の招待
+   - `groups:write` — **private チャンネルへの招待**。private を使うなら必須
 
 ```bash
 grep -c '^SLACK_BOT_TOKEN=' .env
@@ -77,7 +80,15 @@ ls src/deshi/channels/slack-instances.ts
   },
   "oauth_config": {
     "scopes": {
-      "bot": ["chat:write", "channels:history", "groups:history", "channels:read", "groups:read", "users:read"]
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "channels:history",
+        "groups:history",
+        "channels:read",
+        "groups:read",
+        "users:read"
+      ]
     }
   },
   "settings": {
@@ -90,6 +101,9 @@ ls src/deshi/channels/slack-instances.ts
   }
 }
 ```
+
+`app_mentions:read` は `app_mention` イベントの必須スコープ。無いと manifest の検証で
+弾かれて App が作れない (UI から手で作る経路は自動付与されるが、manifest 経路はされない)。
 
 **スコープが管理者BOT より狭いのは意図的**:
 
@@ -144,16 +158,19 @@ grep 'Channel adapter started' logs/nanoclaw.log | tail -5
 ### 6. 権限分離運用を有効にする
 
 ```bash
-pnpm exec tsx src/deshi/enable-permission-split.ts \
-  --knowledge-group <KNOWLEDGE_AG> \
-  --bot-token "$(grep '^SLACK_BOT_TOKEN_<SUFFIX>=' .env | cut -d= -f2-)"
+SLACK_KNOWLEDGE_BOT_TOKEN="$(grep '^SLACK_BOT_TOKEN_<SUFFIX>=' .env | cut -d= -f2-)" \
+  pnpm exec tsx src/deshi/enable-permission-split.ts \
+    --knowledge-group <KNOWLEDGE_AG> \
+    --knowledge-instance slack-<suffix を小文字化したもの>
 ```
 
-`--bot-token` は知識検索BOT の user id を `auth.test` で引くために使う (保存するのは
-user id だけで、トークンは保存しない)。引けなかった場合も続行するが、**チャンネルへの
-自動招待ができなくなり**、代わりに「招待してください」と案内する動きになる。
+トークンは知識検索BOT の user id を `auth.test` で引くために使う (保存するのは user id
+だけで、トークンは残さない)。`--bot-token` でも渡せるが、**argv は同じ host の他ユーザーに
+`ps` で見えるため環境変数を推奨**する。
 
-出力に `knowledge bot user id` が出ていれば自動招待まで有効。
+引けなかった場合も続行するが、**チャンネルへの自動招待ができなくなり**、代わりに
+「招待してください」と案内する動きになる。出力に `knowledge bot user id` が出ていれば
+自動招待まで有効。**やり直すときにトークンを省いても、覚えている user id は消えない。**
 
 ### 7. 完了を伝える
 
@@ -162,6 +179,8 @@ user id だけで、トークンは保存しない)。引けなかった場合�
 - **以後、チャンネルに管理者BOT を招待 → メンション → DM の承認カードを押す、だけで
   そのチャンネルの権限分離セットアップが自動で走る**。合言葉やコマンドは要らない
 - 承認した人と、チャンネルを作った人が、そのチャンネルの管理者になる
+- **知識検索BOT 側の登録も同時に済ませる**ので、承認カードは 1 回しか出ない。
+  知識検索BOT のチャンネルは「誰でも質問できる」設定になる (知識の範囲は別途 scope で縛る)
 - 管理者を増やすには、そのチャンネルで「@対象者 に権限を付与して」と伝える
 - 公開する知識の範囲は、承認後に DM に届くリンクから設定する。**設定するまで
   知識検索BOT は何も答えない** (deny-by-default)
@@ -178,6 +197,15 @@ sqlite3 data/v2.db 'DELETE FROM permission_split_config;'
 sqlite3 data/v2.db 'DELETE FROM permission_split_groups;'
 ```
 
+⚠️ **セットアップが付与した scoped admin (`user_roles`) と、知識検索BOT の配線
+(`messaging_groups` / `messaging_group_agents`) はこれでは消えない。** 権限を残したく
+なければ個別に外す:
+
+```bash
+./bin/ncl roles list          # agent_group_id が入っている admin 行を確認
+./bin/ncl roles revoke --user <user> --role admin --group <agent group>
+```
+
 知識検索BOT 自体を外すには、`.env` から `<SUFFIX>` の宣言とトークンを消して再起動する
 (`/boswell-manage-slack-workspaces` の WS 削除フローと同じ)。
 
@@ -187,7 +215,7 @@ sqlite3 data/v2.db 'DELETE FROM permission_split_groups;'
 |---|---|
 | 承認カードが Slack に来ない | 管理者BOT の `im:write` スコープ。`ensureUserDm: adapter.openDM failed` がログに出る |
 | セットアップが走らない | `permission_split_config` に行があるか。DM を登録した場合は対象外 (チャンネルのみ) |
-| 知識検索BOT が招待されない | `knowledge_bot_user_id` が入っているか。管理者BOT に `channels:manage` があるか |
+| 知識検索BOT が招待されない | `knowledge_bot_user_id` が入っているか。public なら `channels:manage`、private なら `groups:write` が管理者BOT にあるか |
 | 知識検索BOT が何も答えない | 知識スコープが未設定。DM のリンクから設定する (deny-by-default なので正常な挙動) |
 
 ## 関連

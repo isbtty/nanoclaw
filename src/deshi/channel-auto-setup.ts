@@ -17,7 +17,7 @@
  * そのため全体を try/catch で包み、できたところまでで進む。
  */
 import { getDb } from '../db/connection.js';
-import { getMessagingGroup } from '../db/messaging-groups.js';
+import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../db/messaging-groups.js';
 import { getDeliveryAdapter } from '../delivery.js';
 import { log } from '../log.js';
 import { upsertUser } from '../modules/permissions/db/users.js';
@@ -76,6 +76,8 @@ async function setUpChannel(agentGroupId: string, messagingGroupId: string, appr
       ? await inviteToChannel(channelId, config.knowledge_bot_user_id)
       : false;
 
+  wireKnowledgeBot(mg, config.knowledge_agent_group_id, config.knowledge_instance);
+
   log.info('Channel auto-setup finished', {
     messagingGroupId,
     agentGroupId,
@@ -86,6 +88,56 @@ async function setUpChannel(agentGroupId: string, messagingGroupId: string, appr
   });
 
   await announce(mg, { approverUserId, channelManager, knowledgeBotInvited: invited });
+}
+
+/**
+ * 知識検索BOT 側のチャンネル登録を先回りで済ませる。
+ *
+ * これが無いと、招待された知識検索BOT の最初の発言で**もう一度チャンネル登録の
+ * 承認カードが出て、agent group を人手で選ばされる**。「承認を押すだけで完了」が
+ * 成立しなくなるので、招待と同時に messaging_group と wiring を作っておく。
+ *
+ * 知識検索BOT の messaging_group は管理者BOT のものと `instance` だけが違う別行になる
+ * (`UNIQUE(channel_type, platform_id, instance)`)。そのため同じチャンネルに対して
+ * policy を別々に持てる:
+ *
+ *   - 管理者BOT 側 … 既存のまま (メンバー制)
+ *   - 知識検索BOT 側 … `public` + `sender_scope='all'`。外部の人が承認を待たずに
+ *     質問できる必要がある (ADR-0019 の tier A)
+ *
+ * 既に行があれば何もしない (再実行・二重承認で壊れない)。
+ */
+function wireKnowledgeBot(channel: MessagingGroup, knowledgeAgentGroupId: string, instance: string): void {
+  const existing = getMessagingGroupByPlatform(channel.channel_type, channel.platform_id, instance);
+  const mgId = existing?.id ?? `mg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  if (!existing) {
+    createMessagingGroup({
+      id: mgId,
+      channel_type: channel.channel_type,
+      platform_id: channel.platform_id,
+      instance,
+      name: channel.name,
+      is_group: 1,
+      // 外部の人が承認を待たずに質問できる必要がある。知識の範囲は
+      // ChannelScopeStore が deny-by-default で別途縛っている。
+      unknown_sender_policy: 'public',
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO messaging_group_agents
+         (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
+          sender_scope, ignored_message_policy, session_mode, priority, created_at)
+       VALUES (?, ?, ?, 'mention', NULL, 'all', 'drop', 'shared', 0, ?)`,
+    )
+    .run(
+      `mga-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      mgId,
+      knowledgeAgentGroupId,
+      new Date().toISOString(),
+    );
 }
 
 /**

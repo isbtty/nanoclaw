@@ -144,7 +144,14 @@ agent group 単位の `permission_split_groups` (§0) との関係:
 1. その agent group を `permission_split_groups` に登録
 2. 承認した特権admin と、チャンネル管理者に scoped admin を付与
 3. 知識検索BOT をそのチャンネルに招待 (`conversations.invite`)
-4. **チャンネルに完了を投稿する**。host からチャンネルへの投稿は配送アダプタ
+4. **知識検索BOT 側のチャンネル登録を先回りで済ませる。** これが無いと、招待された
+   知識検索BOT の最初の発言でもう一度承認カードが出て agent group を人手で選ばされ、
+   「承認を押すだけで完了」が成立しない。`messaging_groups` は `instance` 違いの別行に
+   なる (`UNIQUE(channel_type, platform_id, instance)`) ので、同じチャンネルに対して
+   policy を別々に持てる — 知識検索BOT 側は `public` + `sender_scope='all'` にして、
+   外部の人が承認を待たずに質問できるようにする (tier A)。知識の範囲は
+   `ChannelScopeStore` が deny-by-default で別途縛る
+5. **チャンネルに完了を投稿する**。host からチャンネルへの投稿は配送アダプタ
    (`getDeliveryAdapter().deliver`) に instance 付きで渡す。DM 配送と同じ経路で、
    セッションを必要としない
 
@@ -154,7 +161,7 @@ agent group 単位の `permission_split_groups` (§0) との関係:
 (実機で確認済み)。`user_dms` の書き換えは既存の配送先を壊しうる操作なので、
 効果が重複する以上やらない。
 
-なお 1〜4 のどこで失敗しても**承認フロー自体は止めない**。この処理は承認 handler の
+なお 1〜5 のどこで失敗しても**承認フロー自体は止めない**。この処理は承認 handler の
 途中から呼ばれ、後段に元メッセージの replay と知識スコープリンクの配送が控えている。
 throw するとチャンネルは配線済みなのにそれらが飛び、カードだけ成功表示で残る。
 

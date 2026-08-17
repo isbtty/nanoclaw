@@ -20,6 +20,7 @@ vi.mock('./slack-workspace-api.js', () => ({
 const CHANNEL_AG = 'ag-lab';
 const KNOWLEDGE_AG = 'ag-knowledge';
 const APPROVER = 'slack:ADMIN';
+const KNOWLEDGE_INSTANCE = 'slack-knowledge';
 
 function now() {
   return new Date().toISOString();
@@ -42,6 +43,7 @@ async function enableHost(botUserId: string | null = 'UKNOWBOT') {
   const { setPermissionSplitConfig } = await import('./permission-split.js');
   setPermissionSplitConfig({
     knowledgeAgentGroupId: KNOWLEDGE_AG,
+    knowledgeInstance: KNOWLEDGE_INSTANCE,
     knowledgeBotUserId: botUserId,
   });
 }
@@ -195,6 +197,47 @@ describe('チャンネル登録の承認に続けて行うセットアップ', (
       expect(text).toContain('<@ADMIN>');
     });
 
+    it('知識検索BOT 側のチャンネル登録を先回りで済ませること（承認が二度要らないように）', async () => {
+      await run();
+
+      const { getMessagingGroupByPlatform } = await import('../db/messaging-groups.js');
+      const knowledgeChannel = getMessagingGroupByPlatform('slack', 'slack:C1', KNOWLEDGE_INSTANCE);
+      expect(knowledgeChannel).toBeDefined();
+
+      const { getDb } = await import('../db/connection.js');
+      expect(
+        getDb()
+          .prepare('SELECT agent_group_id FROM messaging_group_agents WHERE messaging_group_id = ?')
+          .get(knowledgeChannel!.id),
+      ).toEqual({ agent_group_id: KNOWLEDGE_AG });
+    });
+
+    it('知識検索BOT 側は、承認を待たずに誰でも質問できる設定にすること', async () => {
+      await run();
+
+      const { getMessagingGroupByPlatform } = await import('../db/messaging-groups.js');
+      const knowledgeChannel = getMessagingGroupByPlatform('slack', 'slack:C1', KNOWLEDGE_INSTANCE);
+      expect(knowledgeChannel?.unknown_sender_policy).toEqual('public');
+    });
+
+    it('管理者BOT 側の設定は、知識検索BOT の配線に引きずられないこと', async () => {
+      await run();
+
+      const { getMessagingGroupByPlatform } = await import('../db/messaging-groups.js');
+      expect(getMessagingGroupByPlatform('slack', 'slack:C1', 'slack')?.unknown_sender_policy).toEqual('strict');
+    });
+
+    it('二度走らせても、知識検索BOT の配線が重複しないこと', async () => {
+      await run();
+      await run();
+
+      const { getDb } = await import('../db/connection.js');
+      const rows = getDb()
+        .prepare('SELECT id FROM messaging_group_agents WHERE agent_group_id = ?')
+        .all(KNOWLEDGE_AG) as unknown[];
+      expect(rows.length).toEqual(1);
+    });
+
     it('DM が登録されたときは、セットアップを走らせないこと', async () => {
       createChannel('mg-dm', 'slack:D1', 0);
 
@@ -214,11 +257,21 @@ describe('チャンネル登録の承認に続けて行うセットアップ', (
     });
 
     it('知識検索BOT の user id が分からない環境では、招待を試みないこと', async () => {
+      const { getDb } = await import('../db/connection.js');
+      getDb().prepare('DELETE FROM permission_split_config').run();
       await enableHost(null);
 
       await run();
 
       expect(inviteToChannel).not.toHaveBeenCalled();
+    });
+
+    it('あとから token 無しでやり直しても、覚えている user id を消さないこと', async () => {
+      await enableHost(null);
+
+      await run();
+
+      expect(inviteToChannel).toHaveBeenCalledWith('C1', 'UKNOWBOT');
     });
   });
 });

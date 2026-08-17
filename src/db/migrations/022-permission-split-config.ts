@@ -23,6 +23,7 @@ export const migration022: Migration = {
       CREATE TABLE permission_split_config (
         id                       INTEGER PRIMARY KEY CHECK (id = 1),
         knowledge_agent_group_id TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,
+        knowledge_instance       TEXT NOT NULL,
         knowledge_bot_user_id    TEXT,
         enabled_at               TEXT NOT NULL
       );
