@@ -97,11 +97,15 @@ deny-by-default なので、DM の channelId に scope を設定しなければ*
 
 ### 4. 知識検索BOT の tool surface
 
-知識検索BOT の `container.json` には **`/boswell-knowledge-search` 固定で boswell に投げる host-tool 1 本だけ**を
-載せる (汎用の `boswell_run_start` は載せない)。回答の生成は boswell 側が行う
-(boswell ADR-0003 / ADR-0010 の「nanoclaw は検閲・配送のみ、判断は boswell」を維持)。
+知識検索BOT の deshi MCP server には `DESHI_MCP_PROFILE=knowledge` を設定する。この profile では
+`health` と `knowledge_search` だけを登録し、汎用の `boswell_run_start` やファイル操作 tool は公開しない。
+`knowledge_search` は質問を `/boswell-knowledge-search` 固定で boswell に渡し、回答の生成も boswell 側で
+行う (boswell ADR-0003 / ADR-0010 の「nanoclaw は検閲・配送のみ、判断は boswell」を維持)。
 
-この host-tool は **channelId を引数で受け取らない**。host 側で ADR-0020 の sender token から解決する。
+`senderToken` は MCP stdio が最新の trigger message から自動注入する。host-tool は token を
+`messaging_groups.platform_id` まで解決して `channelContext` を組み立てるため、agent の入力 schema に
+`channelId` / `channelContext` / `senderToken` は載らない。container が別チャンネルを申告して scope を
+広げる経路を作らない。
 
 ### 5. チャンネルのセットアップ — 既存の承認フローに相乗りする
 
@@ -274,6 +278,7 @@ Slack 起点の依頼は Slack の admin に届く。ただし到達判定に `e
 | 4 | **instance サフィックスは運用開始後に改名不可**。改名すると `messaging_groups` 行と Chat SDK state が orphan 化する | 受容。命名を最初に確定させる運用でカバー | セットアップスキルが命名を固定できているか |
 | 5 | **`slack.ts` ミラーのドリフト** (ADR-0018 制約 4)。upstream 更新が named instance に自動追随しない | 受容。`/deshi-update-from-upstream` のチェックリストで人間が確認 | チェックリストに項目が入っているか |
 | 6 | **知識検索BOT は scope 未設定の間、何も答えられない**。deny-by-default | 意図した挙動 | 新規ルームのたびに owner がボトルネックにならないか |
+| 7 | **container は host-tools-server を curl で直接叩ける**。`TOOL_ALLOWLIST` (`container/agent-runner/src/providers/claude.ts:43`) は agent group に依らず `Bash` を含み、`/tools/*` は loopback 無認証、`egress-lockdown.ts` の `PROXY_BYPASS` は `host.docker.internal` を素通しにする。prompt injection された知識検索 container が `deshi_daemon_send_file_to_chat` に任意 path を渡せば、知識ベースを公開ルームに吐き出せる | **未受容。base → main の前に判断が要る** | `/tools/*` に positive identity を要求するか、egress proxy で path を絞るか |
 
 ## 不採用案
 
