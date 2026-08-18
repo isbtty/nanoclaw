@@ -57,6 +57,15 @@ pnpm run build
 
 ### Create Slack App
 
+<!-- BEGIN deshi: permission-split manifest -->
+> **権限分離運用 (管理者BOT + 知識検索BOT) を予定しているなら、先に
+> `/boswell-add-slack-permission-split` の「前提チェック」節のマニフェストを見ること。**
+> 下の手順で作ると `im:write` / `channels:manage` / `groups:write` が付かず、後から足して
+> 再インストールするやり直しが必要になる。**From an app manifest** でそちらの JSON を
+> 貼れば最初から揃う (Signing Secret の取得と `.env` 配線は下の手順に戻る)。
+<!-- END deshi: permission-split manifest -->
+
+
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App** > **From scratch**
 2. Name it (e.g., "NanoClaw") and select your workspace
 3. Go to **OAuth & Permissions** and add Bot Token Scopes:

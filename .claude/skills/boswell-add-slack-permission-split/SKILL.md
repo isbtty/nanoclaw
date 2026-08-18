@@ -34,19 +34,89 @@ allowed-tools: Bash, Read, Edit, AskUserQuestion
 
 1. `/add-slack` 済みか — `.env` に `SLACK_BOT_TOKEN` があること
 2. `src/deshi/channels/slack-instances.ts` があること (無ければ ADR-0018 が未取込)
-3. 管理者BOT 側のスコープ:
-   - `im:write` — 承認カードの DM 配送
-   - `channels:read` — チャンネル情報 (作成者) の取得
-   - `channels:manage` — public チャンネルへの知識検索BOT の招待
-   - `groups:write` — **private チャンネルへの招待**。private を使うなら必須
+3. 管理者BOT のスコープが足りているか
 
 ```bash
 grep -c '^SLACK_BOT_TOKEN=' .env
 ls src/deshi/channels/slack-instances.ts
 ```
 
-> ⚠️ `im:write` が無いと、Slack の admin が「到達不能」と判定され承認カードが
-> 他プラットフォームへフォールバックする (実測済み)。ここで必ず潰しておく。
+スコープは `auth.test` の**レスポンスヘッダ**から読む (body には出ない)。
+
+```bash
+curl -s -D- -o/dev/null -X POST https://slack.com/api/auth.test \
+  -H "Authorization: Bearer $(grep '^SLACK_BOT_TOKEN=' .env | cut -d= -f2-)" \
+  | grep -i '^x-oauth-scopes:'
+```
+
+`/add-slack` の手順だけでは**必ず 3 つ足りない**。権限分離で追加が要るのはここ:
+
+| スコープ | 何に要るか | 無いとどうなるか |
+|---|---|---|
+| `im:write` | 承認カードの DM 配送 | Slack の admin が「到達不能」と判定され、承認カードが他プラットフォームへフォールバックする (実測済み) |
+| `channels:manage` | public チャンネルへの知識検索BOT の招待 | セットアップが「手で招待してください」止まりになる |
+| `groups:write` | private チャンネルへの招待 | private チャンネルで権限分離が使えない |
+
+### 足りないときの直し方 — マニフェストを貼る
+
+**チェックボックスを手で足さないこと。** 保存漏れ・再インストール未完了で
+「追加したのに反映されない」が起きやすい (実測で 2 回失敗した)。App Manifest ページに
+**完全なマニフェストを貼って上書きする**方が確実で、差分を目で確認できる。
+
+> 1. [api.slack.com/apps](https://api.slack.com/apps) → 管理者BOT の App → **App Manifest**
+> 2. 下の JSON で**全体を置き換えて** Save Changes
+>    (`display_information.name` と `bot_user.display_name` は今の名前に合わせて書き換える)
+> 3. 上部に出る **Reinstall to Workspace** → 権限確認画面で **許可する** まで押し切る
+> 4. 完了したら、上の `curl` をもう一度回してスコープを再確認する
+
+```json
+{
+  "display_information": { "name": "<いまの App 名>" },
+  "features": {
+    "bot_user": { "display_name": "<いまの bot 表示名>", "always_online": false },
+    "app_home": { "messages_tab_enabled": true, "home_tab_enabled": false }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "chat:write.public",
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "channels:read",
+        "groups:read",
+        "users:read",
+        "files:read",
+        "reactions:write",
+        "im:write",
+        "channels:manage",
+        "groups:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["app_mention", "message.channels", "message.groups", "message.im"]
+    },
+    "socket_mode_enabled": true,
+    "org_deploy_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
+```
+
+上 11 個は `/add-slack` 相当、下 3 個が権限分離の追加分。
+
+再インストール後、**トークンが変わっていないか**を確認する。同じなら `.env` も再起動も
+不要。変わっていたら `.env` の `SLACK_BOT_TOKEN` を差し替えて
+`/boswell-restart-nanoclaw` を回す。
+
+> 💡 **これから `/add-slack` をやる場合**は、App 作成の時点でこのマニフェストを使うと
+> 後から足す手間が無くなる。`/add-slack` の「Create Slack App」節の代わりに
+> **From an app manifest** で上の JSON を貼ればよい (Signing Secret の取得と `.env` 配線は
+> `/add-slack` の手順に戻る)。
 
 ## Workflow
 
@@ -59,9 +129,27 @@ ls src/deshi/channels/slack-instances.ts
 
 以降 `<SUFFIX>` と表記する。instance 名は `slack-knowledge` のように小文字化される。
 
-### 2. 知識検索BOT の Slack App をマニフェストから作る (ユーザー操作)
+### 2. 知識検索BOT の表示名を決める (ユーザーに聞く)
 
-以下のマニフェストを**そのまま提示**し、api.slack.com で貼り付けてもらう。
+**勝手に決めないこと。** 利用者はメンション先で BOT を使い分けるので、表示名がそのまま
+運用上の呼び名になる。`AskUserQuestion` で聞く。
+
+聞くときに伝えること:
+
+- 管理者BOT と**並んで表示される**ので、見て区別がつく名前にする
+- 「知識検索用だ」と分かる名前が望ましい (利用者が何を聞いていいか判断できる)
+- 日本語で構わない。長すぎると Slack 側の検証で弾かれるので短めに
+- **後から変えられる** (App Manifest を編集して Save するだけ)。suffix と違って不可逆ではない
+
+既定案として `相談用 <組織名/オーナー名> Boswell` のような、用途 + 所属が分かる形を
+提示してよい。ただし**採用するかは必ず本人に決めさせる**。
+
+以降 `<BOT_NAME>` と表記する。
+
+### 3. 知識検索BOT の Slack App をマニフェストから作る (ユーザー操作)
+
+以下のマニフェストの `<BOT_NAME>` を 2 で決めた名前に置き換えて**提示**し、
+api.slack.com で貼り付けてもらう。
 
 > 1. [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From an app manifest**
 > 2. ワークスペースを選ぶ (管理者BOT と同じもの)
@@ -73,11 +161,11 @@ ls src/deshi/channels/slack-instances.ts
 ```json
 {
   "display_information": {
-    "name": "Knowledge Search",
+    "name": "<BOT_NAME>",
     "description": "公開範囲の知識を検索して答えるボット"
   },
   "features": {
-    "bot_user": { "display_name": "Knowledge Search", "always_online": false },
+    "bot_user": { "display_name": "<BOT_NAME>", "always_online": false },
     "app_home": { "messages_tab_enabled": false }
   },
   "oauth_config": {
@@ -115,7 +203,7 @@ ls src/deshi/channels/slack-instances.ts
 
 万一この BOT が乗っ取られても、Slack 上でできることがほぼ無い状態にしてある。
 
-### 3. `.env` 配線と再起動
+### 4. `.env` 配線と再起動
 
 **`/boswell-manage-slack-workspaces` の Workflow 3〜4 に委譲する** (同じ機構なので
 手順を重複させない)。渡すのは `<SUFFIX>` と 2 で取得した 2 つのトークン。
@@ -137,12 +225,16 @@ grep 'Channel adapter started' logs/nanoclaw.log | tail -5
 `instance="slack-<suffix 小文字>"` の行が出ていれば成功。出ていなければ
 `Channel credentials missing, skipping` を探す (トークンの入れ間違い)。
 
-### 4. 知識検索BOT 用の agent group を作る
+### 5. 知識検索BOT 用の agent group を作る
 
 全チャンネル共通で 1 つだけ作る (ADR-0021 §2)。
 
+`--name` は `ncl groups list` に出る表示名なので、Slack の BOT 名と揃えておくと運用時に
+対応が取れる。`--folder` は host 上のディレクトリ名になるので `knowledge-search` 固定
+(以降の手順がこのパスを前提にしている)。
+
 ```bash
-./bin/ncl groups create --name "Knowledge Search" --folder knowledge-search
+./bin/ncl groups create --name "<BOT_NAME>" --folder knowledge-search
 ```
 
 出力の `id` を控える。以降 `<KNOWLEDGE_AG>` と表記する。
@@ -203,14 +295,14 @@ EOF
 ./bin/ncl groups restart --id <KNOWLEDGE_AG>
 ```
 
-### 5. 導入者を特権admin にする
+### 6. 導入者を特権admin にする
 
 チャンネル登録の承認を押せる人。ここで登録した人が、以後のセットアップの起点になる。
 
 `/boswell-manage-nanoclaw-admins grant` に委譲する。メンバー ID の調べ方の案内も
 そちらにある。
 
-### 6. 権限分離運用を有効にする
+### 7. 権限分離運用を有効にする
 
 ```bash
 SLACK_KNOWLEDGE_BOT_TOKEN="$(grep '^SLACK_BOT_TOKEN_<SUFFIX>=' .env | cut -d= -f2-)" \
@@ -227,7 +319,7 @@ SLACK_KNOWLEDGE_BOT_TOKEN="$(grep '^SLACK_BOT_TOKEN_<SUFFIX>=' .env | cut -d= -f
 「招待してください」と案内する動きになる。出力に `knowledge bot user id` が出ていれば
 自動招待まで有効。**やり直すときにトークンを省いても、覚えている user id は消えない。**
 
-### 7. 完了を伝える
+### 8. 完了を伝える
 
 以下をユーザーに伝えて終わる:
 
