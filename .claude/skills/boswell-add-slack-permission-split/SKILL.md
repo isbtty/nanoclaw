@@ -1,17 +1,19 @@
 ---
-name: boswell-setup-permission-split
-description: この host を権限分離運用にする初回セットアップ (ADR-0021 §5.3)。知識検索BOT 用の 2 つ目の Slack App をマニフェストから作らせ、agent group を用意し、permission_split_config を書き込むまでを誘導する。host 1 台につき 1 回。トリガー: "権限分離", "知識検索BOTを追加", "tier A", "外部研究生", "setup permission split" (project)
+name: boswell-add-slack-permission-split
+description: `/add-slack` のオプション — 入れた Slack BOT を「管理者BOT」とし、知識検索専用の 2 つ目の BOT を足して権限分離運用にする (ADR-0021 §5.3)。2 つ目の Slack App をマニフェストから作らせ、agent group を用意し、permission_split_config を書き込むまでを誘導する。host 1 台につき 1 回。トリガー: "権限分離", "知識検索BOTを追加", "tier A", "外部研究生", "add slack permission split" (project)
 user-invocable: true
 allowed-tools: Bash, Read, Edit, AskUserQuestion
 ---
 
-# `/boswell-setup-permission-split` — 権限分離運用の初回セットアップ
+# `/boswell-add-slack-permission-split` — Slack BOT を権限分離構成にする
 
 ## 概要
 
-この host を**権限分離運用**にする。完了すると、以後のチャンネル登録の承認に
-権限分離の配線が自動で続くようになる (ADR-0021 §5.2)。
+**`/add-slack` のオプション**。`/add-slack` で入れた BOT を「管理者BOT」に据えたまま、
+知識検索専用の 2 つ目の BOT を足して**権限分離運用**にする。完了すると、以後のチャンネル
+登録の承認に権限分離の配線が自動で続くようになる (ADR-0021 §5.2)。
 
+- **`/add-slack` 済みであることが前提**。単独では実行できない
 - **host 1 台につき 1 回**だけ実行する。チャンネルごとの設定は不要
 - **nanoclaw host 上 (Mac mini) で operator が実行**する
 - 冪等。やり直しても壊れない
@@ -274,6 +276,7 @@ sqlite3 data/v2.db 'DELETE FROM permission_split_groups;'
 ## 関連
 
 - 設計: `.deshi/adr/0021-bot-permission-split.md` (§5.3 が本スキル)
+- 前提の Slack 導入: `/add-slack` (本スキルはそのオプション)
 - instance 機構: `.deshi/adr/0018-slack-multi-workspace.md`
 - 追加 WS の配線: `/boswell-manage-slack-workspaces`
 - 特権admin の管理: `/boswell-manage-nanoclaw-admins`
