@@ -8,9 +8,8 @@
  * 部屋の決定と Authorization の要否は search 側と同じ。理屈は
  * {@link resolveKnowledgeRequest} を参照。
  */
-import { BAD_REQUEST_ERROR, INDEX_UNAVAILABLE_ERROR, resolveKnowledgeRequest } from './knowledge-request.js';
+import { BAD_REQUEST_ERROR, KNOWLEDGE_TIMEOUT_MS, resolveKnowledgeRequest } from './knowledge-request.js';
 
-const TIMEOUT_MS = Number(process.env.DESHI_KNOWLEDGE_TIMEOUT_MS ?? 30000);
 const UNAVAILABLE_ERROR = '知識の読み取りを利用できませんでした';
 const NOT_FOUND_ERROR = 'その資料は見つかりませんでした';
 
@@ -38,10 +37,11 @@ export async function daemonKnowledgeReadHandler(body: unknown): Promise<DaemonK
         Authorization: `Bearer ${context.secret}:nanoclaw`,
       },
       body: JSON.stringify({ channelId: context.channelId, docId: req.docId }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(KNOWLEDGE_TIMEOUT_MS),
     });
+    // 403 (公開範囲外) と 404 (そんな docId は無い) を区別して見せない。区別できると
+    // 範囲外に何が在るかの手がかりになる。
     if (response.status === 403 || response.status === 404) return { ok: false, error: NOT_FOUND_ERROR };
-    if (response.status === 503) return { ok: false, error: INDEX_UNAVAILABLE_ERROR };
     if (!response.ok) return { ok: false, error: UNAVAILABLE_ERROR };
 
     const data = (await response.json()) as { name?: string; content?: string };

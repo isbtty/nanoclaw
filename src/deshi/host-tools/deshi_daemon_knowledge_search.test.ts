@@ -103,14 +103,44 @@ describe('知識検索', () => {
     expect(JSON.parse(request.body as string)).toEqual({ channelId: 'slack:C0123', query: '質問', limit: 5 });
   });
 
-  it('検索結果を詰め替えずに返すこと', async () => {
-    const results = [{ docId: 'doc-1', snippet: '抜粋', path: '公開資料' }];
-    fetchMock.mockResolvedValueOnce(jsonResponse({ results }));
+  it('boswell が知らないフィールドを足しても、決めた項目しか返さないこと', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        results: [{ docId: 'doc-1', name: '資料', score: 0.9, snippet: '抜粋', path: '/wiki/secret.md' }],
+      }),
+    );
 
     await expect(daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() })).resolves.toEqual({
       ok: true,
-      results,
+      results: [{ docId: 'doc-1', name: '資料', score: 0.9, snippet: '抜粋' }],
     });
+  });
+
+  it.each([
+    ['質問が空', { query: '   ' }],
+    ['件数の指定が数でない', { query: '質問', limit: 'たくさん' }],
+    ['件数の指定が 0 以下', { query: '質問', limit: 0 }],
+  ])('%s の場合、外部へ問い合わせないこと', async (_name, extra) => {
+    const result = await daemonKnowledgeSearchHandler({ ...extra, senderToken: issueToken() });
+
+    expect(result.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('検索結果が一覧の形で返らなかった場合、成功として扱わないこと', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ results: 'なにか' }));
+
+    const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('boswell に繋がらない場合、成功として扱わないこと', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('network down'));
+
+    const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
+
+    expect(result.ok).toBe(false);
   });
 
   it.each([

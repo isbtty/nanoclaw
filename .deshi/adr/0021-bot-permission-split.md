@@ -105,8 +105,14 @@ deny-by-default なので、DM の channelId に scope を設定しなければ*
 
 検索結果から回答を組み立てる作文は container 側の agent が行う。これは boswell ADR-0003 / ADR-0010 の
 「判断は boswell」に対する意図的な例外である。公開範囲の判定は引き続き boswell の
-`ChannelScopeStore` が server 側で完結させ、範囲外を存在しないものとして扱う。container が受け取れる
-情報量は従来から増えないため、追加の権限を渡さずに boswell 側の AI 実行だけを除ける。
+`ChannelScopeStore` が server 側で完結させ、範囲外を存在しないものとして扱う。
+
+**ただし container が引き出せる情報量は増える。** 旧構成が container に返したのは boswell 側の
+Claude が作文した回答 1 本だったが、`daemon_knowledge_read` は公開範囲内の資料の本文を丸ごと返す。
+公開範囲そのものは変わらないので「見えてはいけないものが見える」ようにはならないが、
+**範囲内を余さず吸い出すコストは下がった**。これを受容する理由は、公開範囲は owner が明示的に
+設定したものであり、範囲内の全文が同席者に渡ることは元々許容されている前提だから。
+逆に言えば、**scope の設定が実質的な唯一の防壁になった**ので、scope を広く取る運用は避ける。
 
 `senderToken` は MCP stdio が最新の trigger message から自動注入する。host-tool は token を
 `messaging_groups.platform_id` まで解決して `channelId` として boswell に渡すため、agent の入力 schema に

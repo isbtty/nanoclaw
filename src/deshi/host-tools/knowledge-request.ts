@@ -25,6 +25,9 @@ import { resolveDaemonEnv } from '../daemon-env.js';
 import { getPermissionSplitConfig } from '../permission-split.js';
 import { resolveSenderToken } from '../sender-token.js';
 
+/** boswell の検索は同期で返る。polling していた頃の長い待ちは要らない。 */
+export const KNOWLEDGE_TIMEOUT_MS = Number(process.env.DESHI_KNOWLEDGE_TIMEOUT_MS ?? 30000);
+
 export const UNVERIFIED_ROOM_ERROR = 'この部屋からの質問として確認できませんでした';
 export const BAD_REQUEST_ERROR = '質問の内容を受け取れませんでした';
 export const INDEX_UNAVAILABLE_ERROR = '知識検索の準備ができていません。しばらくしてから再度お試しください';

@@ -14,9 +14,12 @@
  * 発火する (`daemon/src/middleware/auth.ts`) が、本エンドポイントが受けるのは
  * `channelId` なので免除されない。付け忘れると実行時に必ず 401 になる。
  */
-import { BAD_REQUEST_ERROR, INDEX_UNAVAILABLE_ERROR, resolveKnowledgeRequest } from './knowledge-request.js';
-
-const TIMEOUT_MS = Number(process.env.DESHI_KNOWLEDGE_TIMEOUT_MS ?? 30000);
+import {
+  BAD_REQUEST_ERROR,
+  INDEX_UNAVAILABLE_ERROR,
+  KNOWLEDGE_TIMEOUT_MS,
+  resolveKnowledgeRequest,
+} from './knowledge-request.js';
 
 const UNAVAILABLE_ERROR = '知識検索を利用できませんでした';
 
@@ -26,7 +29,12 @@ export interface DaemonKnowledgeSearchRequest {
   limit?: number;
 }
 
-export type KnowledgeSearchResult = { docId: string; snippet: string; [key: string]: unknown };
+export interface KnowledgeSearchResult {
+  docId: string;
+  name: string;
+  score: number;
+  snippet: string;
+}
 export type DaemonKnowledgeSearchResponse =
   | { ok: true; results: KnowledgeSearchResult[] }
   | { ok: false; error: string };
@@ -53,15 +61,33 @@ export async function daemonKnowledgeSearchHandler(body: unknown): Promise<Daemo
         Authorization: `Bearer ${context.secret}:nanoclaw`,
       },
       body: JSON.stringify({ channelId: context.channelId, query: req.query, limit: req.limit }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(KNOWLEDGE_TIMEOUT_MS),
     });
     if (response.status === 503) return { ok: false, error: INDEX_UNAVAILABLE_ERROR };
     if (!response.ok) return { ok: false, error: UNAVAILABLE_ERROR };
 
-    const data = (await response.json()) as { results?: KnowledgeSearchResult[] };
-    return Array.isArray(data.results) ? { ok: true, results: data.results } : { ok: false, error: UNAVAILABLE_ERROR };
+    const data = (await response.json()) as { results?: unknown };
+    if (!Array.isArray(data.results)) return { ok: false, error: UNAVAILABLE_ERROR };
+    return { ok: true, results: data.results.map(pickResultFields) };
     // eslint-disable-next-line no-catch-all/no-catch-all -- 内部情報を返さず fail-closed にする
   } catch {
     return { ok: false, error: UNAVAILABLE_ERROR };
   }
+}
+
+/**
+ * boswell が返した hit から、container に渡す分だけを取り出す。
+ *
+ * 素通しにすると、boswell が将来フィールドを足したとき (path 等) にそれがそのまま
+ * 外部の人の居る部屋の agent へ抜ける。公開範囲を絞るための BOT なので、増えるときは
+ * 明示的に足す側に倒す。
+ */
+function pickResultFields(hit: unknown): KnowledgeSearchResult {
+  const h = (hit ?? {}) as Record<string, unknown>;
+  return {
+    docId: typeof h.docId === 'string' ? h.docId : '',
+    name: typeof h.name === 'string' ? h.name : '',
+    score: typeof h.score === 'number' ? h.score : 0,
+    snippet: typeof h.snippet === 'string' ? h.snippet : '',
+  };
 }

@@ -153,8 +153,23 @@ describe('知識読み取り', () => {
     expect(JSON.parse(request.body as string).channelId).toBe('slack:C0123');
   });
 
-  it('検索基盤が利用できない場合、成功として扱わないこと', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'Search index not ready' }, 503));
+  it('資料の指定が空の場合、外部へ問い合わせないこと', async () => {
+    const result = await daemonKnowledgeReadHandler({ docId: '   ', senderToken: issueToken() });
+
+    expect(result.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('本文が返らなかった場合、成功として扱わないこと', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ name: '資料' }));
+
+    const result = await daemonKnowledgeReadHandler({ docId: 'doc-1', senderToken: issueToken() });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('boswell に繋がらない場合、成功として扱わないこと', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('network down'));
 
     const result = await daemonKnowledgeReadHandler({ docId: 'doc-1', senderToken: issueToken() });
 
