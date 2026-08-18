@@ -17,6 +17,11 @@ upstream の変更そのものは upstream の CHANGELOG / release notes を参�
 ### Added
 
 - `/boswell-add-slack-permission-split` — `/add-slack` のオプションとして、管理者BOT と知識検索BOT の 2 本立てを配線する初回セットアップ。当初 `/boswell-setup-permission-split` で起票したが、add-slack の派生である位置づけを名前に出すため改名した (ADR-0016 の許可動詞 `add` を使用)。
+  実行 FB を反映: (1) 管理者BOT の不足スコープはチェックボックスではなく App Manifest の
+  貼り替えで直す手順にした (手作業だと保存漏れ・再インストール未完了で 2 回失敗した)。
+  `auth.test` のレスポンスヘッダでスコープを確認するコマンドも載せた。
+  (2) 知識検索BOT の表示名を `AskUserQuestion` で人間に決めさせる手順を追加 (旧: "Knowledge Search" 固定)。(3) `/add-slack` に、権限分離を予定しているなら最初から
+  マニフェストで作るよう促す deshi ブロックを追記。
 - 知識検索BOT を boswell の検索 API 直結へ変更。検索と本文取得を分離し、公開範囲の判定を boswell に残したまま回答生成を container 側へ移した。
 - ADR-0019: deshi 所有テーブルの作り方 (`deshi_` prefix + `CREATE TABLE IF NOT EXISTS`) と、`ensureUserDm` への直接侵襲を ADR-0002 の明示的例外として記録。
 - ADR-0020: sender token — container が「誰の依頼か」を偽れないよう、host が inbound の各メッセージに短命トークンを打刻し、`ncl` / host-tool 呼び出しの主体を host 側で解決する。
