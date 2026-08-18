@@ -77,6 +77,10 @@ function toFolder(name: string): string {
 
 // ── Card builders ──
 
+// NOTE: when the card is delivered to a shared approvals channel (boswell#712),
+// everyone in that channel sees options filtered by the *nominal* approver's
+// privileges. Harmless while every admin is global (hasAdminPrivilege is true
+// for all agent groups); revisit when scoped admins are introduced.
 function visibleAgentGroupsForApprover(
   agentGroups: AgentGroup[],
   approverUserId: string | null | undefined,

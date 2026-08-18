@@ -30,6 +30,7 @@ import {
 import { log } from '../../log.js';
 import { registerMessageInterceptor } from '../../router.js';
 import type { PendingApproval, Session } from '../../types.js';
+import { parseSender } from '../permissions/sender-identity.js';
 import { ensureUserDm } from '../permissions/user-dm.js';
 import { finalizeReject } from './finalize.js';
 
@@ -49,13 +50,40 @@ interface ReasonArming {
 }
 
 /**
- * Approvers waiting to type a rejection reason, keyed by their DM channel
- * (`<channelType>:<dmPlatformId>`). A DM's platform id is unique per user, so
- * the inbound reply matches by channel alone — no sender re-parsing needed, and
- * a group message can never collide with an armed DM. Cleared on receipt,
- * staleness, or restart.
+ * Approvers waiting to type a rejection reason, keyed by the channel the prompt
+ * was delivered to (`<channelType>:<platformId>`).
+ *
+ * The key alone is not enough to identify whose reply this is: an approver's DM
+ * can be redirected to a shared channel, and there several admins share one key
+ * and everyone else's messages land on it too. So each key holds a *list* of
+ * armings and consumption matches on the sender — a bystander's message is left
+ * to route normally instead of being swallowed as someone else's reason.
+ *
+ * Cleared on receipt, staleness, or restart.
  */
-const awaitingReason = new Map<string, ReasonArming>();
+const awaitingReason = new Map<string, ReasonArming[]>();
+
+/**
+ * Arm for one sender. A second arming by the same admin replaces the first —
+ * they can only be typing one reason, and the superseded hold is a durable row
+ * the sweep finalizes. Other admins on the same channel are untouched.
+ */
+function arm(key: string, arming: ReasonArming): void {
+  const list = awaitingReason.get(key);
+  if (!list) {
+    awaitingReason.set(key, [arming]);
+    return;
+  }
+  const existing = list.findIndex((a) => a.userId === arming.userId);
+  if (existing >= 0) list[existing] = arming;
+  else list.push(arming);
+}
+
+/** Remove one arming by index, dropping the key when it empties. */
+function disarm(key: string, list: ReasonArming[], index: number): void {
+  list.splice(index, 1);
+  if (list.length === 0) awaitingReason.delete(key);
+}
 
 function dmKey(channelType: string, platformId: string): string {
   return `${channelType}:${platformId}`;
@@ -111,23 +139,34 @@ export async function armReasonCapture(approval: PendingApproval, session: Sessi
   // can't arrive before the prompt is read, so there's no lost-message window.
   const expiresAt = new Date(Date.now() + REASON_CAPTURE_WINDOW_MS).toISOString();
   markApprovalAwaitingReason(approval.approval_id, expiresAt);
-  awaitingReason.set(dmKey(dm.channel_type, dm.platform_id), { approvalId: approval.approval_id, userId });
+  arm(dmKey(dm.channel_type, dm.platform_id), { approvalId: approval.approval_id, userId });
   log.info('reject-with-reason: awaiting reason reply', { approvalId: approval.approval_id, userId });
 }
 
 /**
- * Router message-interceptor: capture the next DM from an admin who armed a
- * reason. Returns true (consume the message) when this DM is an armed reason
- * channel and still holds a live row; false otherwise so normal routing runs.
+ * Router message-interceptor: capture the next message from an admin who armed
+ * a reason. Returns true (consume the message) when the sender has a live
+ * arming on this channel; false otherwise so normal routing runs.
+ *
+ * Runs ahead of the router's sender resolution, so the sender is parsed here.
  *
  * Exported for tests; registered as the interceptor below.
  */
 export async function captureReasonReply(event: InboundEvent): Promise<boolean> {
-  const arming = awaitingReason.get(dmKey(event.channelType, event.platformId));
-  if (!arming) return false;
+  const key = dmKey(event.channelType, event.platformId);
+  const list = awaitingReason.get(key);
+  if (!list) return false;
 
-  // This DM is an armed reason channel — disarm regardless of outcome.
-  awaitingReason.delete(dmKey(event.channelType, event.platformId));
+  // Match on the sender: a shared approvals channel carries other people's
+  // messages too, and swallowing those would drop them from routing entirely.
+  const senderId = parseSender(event).userId;
+  const index = list.findIndex((a) => a.userId === senderId);
+  if (index < 0) return false;
+  const arming = list[index];
+
+  // This sender's arming fires — disarm it regardless of outcome. Other
+  // approvers armed on the same channel keep waiting.
+  disarm(key, list, index);
 
   const approval = getPendingApproval(arming.approvalId);
   if (!approval || approval.status !== 'awaiting_reason') {

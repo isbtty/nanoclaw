@@ -9,7 +9,14 @@ upstream の変更そのものは upstream の CHANGELOG / release notes を参�
 
 ## [Unreleased]
 
+### Fixed
+
+- 承認カードの共有チャンネル配線を「配線時のスナップショット」から「配信時のライブ判定」に変更 (isbtty/boswell#712)。`user_dms` を書き換える旧方式は配線後に付与した admin に適用されず、承認カードが個人 DM に埋もれる事故を起こしていた。設定は `deshi_approvals_channel` テーブルに持ち、`ensureUserDm` 冒頭の override が配信のたびに `user_roles` を引き直す。配線と grant の順序依存が無くなり、revoke で自動的に個人 DM 解決へ戻る。ロールバックは `run.ts --clear`。
+- reject 理由キャプチャが、宛先チャンネルで次に発言した人 (誰でも) の発言を理由として吸い、そのメッセージを routing から落としていた問題を修正 (upstream 由来のバグ)。arming を送信者ごとに保持し、arming 本人の発言のみ消費する。
+
 ### Added
+
+- ADR-0019: deshi 所有テーブルの作り方 (`deshi_` prefix + `CREATE TABLE IF NOT EXISTS`) と、`ensureUserDm` への直接侵襲を ADR-0002 の明示的例外として記録。
 
 - 初期セットアップ — `.deshi/` メタディレクトリ (`upstream-versions.json` / `skills-catalog.json` / `adr/` / `docs/` / `scripts/`) を導入。
 - `src/deshi/` namespace 雛形 (`channels/` / `providers/` の空 barrel)。
