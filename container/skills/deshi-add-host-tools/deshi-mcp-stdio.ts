@@ -5,12 +5,16 @@
  * host-tools-server (http://host.docker.internal:5180) に HTTP POST で転送する。
  *
  * 公開する tool:
- *   - health                  : bridge 自身の生存確認 (`POST /tools/health`)
- *   - daemon_run_skill        : deshi daemon の POST /run を叩く
- *   - daemon_poll_until_done  : deshi daemon の GET /jobs/:jobId を long polling
- *   - daemon_send_file_to_chat: deshi-raw/deshi-wiki 配下のファイルを現在のチャットに送る
+ *   - health                   : bridge 自身の生存確認 (`POST /tools/health`)
+ *   - daemon_knowledge_search  : このチャンネルの公開範囲だけを検索して答える
+ *   - boswell_run_start        : deshi daemon の POST /run を叩く
+ *   - boswell_run_poll         : deshi daemon の GET /jobs/:jobId を long polling
+ *   - daemon_send_file_to_chat : deshi-raw/deshi-wiki 配下のファイルを現在のチャットに送る
  *   - daemon_push_file_to_raw  : container 内のファイル (Telegram 添付等) を
  *                                deshi-raw の inbox/ または outputs/ に push (ADR-0008)
+ *
+ * DESHI_MCP_PROFILE=knowledge のときは health と daemon_knowledge_search だけを登録する
+ * (ADR-0019 §4)。
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
@@ -51,13 +55,25 @@ import { hostFetch } from './host-fetch.js';
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
 /**
  * 知識検索BOT 用の絞り込み profile (.deshi/adr/0019-bot-permission-split.md §4)。
- * true のとき `health` と `knowledge_search` 以外を登録しない。外部の人が居る
+ * true のとき `health` と `daemon_knowledge_search` 以外を登録しない。外部の人が居る
  * 部屋で動くため、skill 実行とファイル操作の口を最初から生やさない。
  */
 const KNOWLEDGE_PROFILE = process.env.DESHI_MCP_PROFILE === 'knowledge';
 
 function log(msg: string): void {
   console.error(`[DESHI] ${msg}`);
+}
+
+/**
+ * ログに出す前に秘密値を伏せる。`senderToken` は 30 分有効な認証情報なので、
+ * container の stderr に平文で残すと、ログを読めるだけで他人の発言として
+ * host-tool を叩けてしまう (ADR-0020)。
+ */
+function redactSecrets(args: unknown): unknown {
+  if (typeof args !== 'object' || args === null) return args;
+  const record = args as Record<string, unknown>;
+  if (!('senderToken' in record)) return args;
+  return { ...record, senderToken: '<redacted>' };
 }
 
 /**
@@ -68,7 +84,7 @@ async function callHostTool(toolName: string, args: unknown): Promise<{
   content: { type: 'text'; text: string }[];
   isError?: boolean;
 }> {
-  log(`>>> ${toolName} ${JSON.stringify(args ?? {})}`);
+  log(`>>> ${toolName} ${JSON.stringify(redactSecrets(args) ?? {})}`);
   try {
     const res = await hostFetch(DESHI_HOST_URL, toolName, args, undefined, { log });
     const text = await res.text();
@@ -253,7 +269,7 @@ function readSenderToken(): string | undefined {
 }
 
 server.tool(
-  'knowledge_search',
+  'daemon_knowledge_search',
   '現在の部屋で公開が許可された知識だけを検索して質問に回答する。ユーザーの質問を query にそのまま渡す。',
   { query: z.string() },
   async (args) => callHostTool('deshi_daemon_knowledge_search', { ...args, senderToken: readSenderToken() }),

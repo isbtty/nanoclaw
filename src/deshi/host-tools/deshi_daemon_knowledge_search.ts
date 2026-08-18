@@ -35,7 +35,13 @@ const TIMEOUT_MS = Number(process.env.DESHI_KNOWLEDGE_TIMEOUT_MS ?? 180000);
 
 const UNVERIFIED_ROOM_ERROR = 'この部屋からの質問として確認できませんでした';
 const UNAVAILABLE_ERROR = '知識検索を利用できませんでした';
-const TIMEOUT_ERROR = '時間内に答えられませんでした';
+/**
+ * 打ち切ってもこちらから job を取り下げる手段は無い。boswell は「まだ誰も結果を
+ * 取りに来ていない」job を 60 秒後に channel へ push する (`daemon/src/routes/run.ts`
+ * の fallback push) ので、待つのをやめた後で回答が遅れて届く。
+ * 「答えられなかった」と言い切ると、その後に届く回答と食い違う。
+ */
+const TIMEOUT_ERROR = '時間がかかっています。答えが出たらこのチャンネルに投稿されます';
 
 export interface DaemonKnowledgeSearchRequest {
   query: string;

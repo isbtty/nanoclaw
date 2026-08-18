@@ -164,7 +164,7 @@ grep 'Channel adapter started' logs/nanoclaw.log | tail -5
 > 書くと parse に失敗する。
 
 `DESHI_MCP_PROFILE=knowledge` を付けた container では、MCP stdio が `health` と
-`knowledge_search` しか登録しない。skill 実行 (`boswell_run_start`) とファイル操作の
+`daemon_knowledge_search` しか登録しない。skill 実行 (`boswell_run_start`) とファイル操作の
 tool は生えない (ADR-0019 §4)。
 
 設定を確認する。`mcpServers.deshi.env.DESHI_MCP_PROFILE` が `knowledge` であること。

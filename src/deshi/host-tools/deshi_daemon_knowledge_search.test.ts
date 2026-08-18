@@ -186,7 +186,7 @@ describe('知識検索', () => {
 
     const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
 
-    expect(result).toEqual({ ok: false, error: '時間内に答えられませんでした' });
+    expect(result).toEqual({ ok: false, error: '時間がかかっています。答えが出たらこのチャンネルに投稿されます' });
   });
 
   it('依頼元が別のチャンネルを指定しても、登録済みの部屋だけを使うこと', async () => {
@@ -207,5 +207,54 @@ describe('知識検索', () => {
       platformId: 'slack:C0123',
       threadId: null,
     });
+  });
+
+  it('依頼が受け付けられなかった場合、回答成功として扱わないこと', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'bad request' }, 400));
+
+    const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
+
+    expect(result.ok).toEqual(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('受付番号が返らなかった場合、待機に入らないこと', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({}, 202));
+
+    const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
+
+    expect(result.ok).toEqual(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('進捗を確認できなくなった場合、待ち続けないこと', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ jobId: 'job-1' }, 202))
+      .mockResolvedValueOnce(jsonResponse({ error: 'job not found' }, 404));
+
+    const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
+
+    expect(result.ok).toEqual(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('完了したのに本文が無い場合、回答成功として扱わないこと', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ jobId: 'job-1' }, 202))
+      .mockResolvedValueOnce(jsonResponse({ status: 'completed' }));
+
+    const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
+
+    expect(result.ok).toEqual(false);
+  });
+
+  it('boswell への認証情報が無い場合、外部へ問い合わせないこと', async () => {
+    vi.stubEnv('BOSWELL_DAEMON_DEVICE_SECRET', '');
+    vi.stubEnv('DESHI_DAEMON_DEVICE_SECRET', '');
+
+    const result = await daemonKnowledgeSearchHandler({ query: '質問', senderToken: issueToken() });
+
+    expect(result.ok).toEqual(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
