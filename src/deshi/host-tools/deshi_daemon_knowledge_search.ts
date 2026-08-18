@@ -1,127 +1,93 @@
 /**
- * Handler: 知識検索BOT 専用の窓口 (.deshi/adr/0021-bot-permission-split.md §4)。
+ * Handler: 知識検索BOT の検索窓口 (.deshi/adr/0021-bot-permission-split.md §4)。
  *
  * HTTP path : POST /tools/deshi_daemon_knowledge_search
  * agent tool: mcp__deshi__daemon_knowledge_search
  *
- * boswell の `/boswell-knowledge-search` に固定で投げる。skill 名を引数にしないのは、
- * この BOT に skill 実行の口を一切持たせないため。
+ * boswell の `POST /knowledge/search` を直接呼ぶ。返るのは引換ID (docId) と抜粋だけで、
+ * 回答の作文は container 側の agent が行う。boswell 側で Claude を起動しないため、
+ * job / polling / timeout の機構は持たない。
  *
- * ## channelId を引数で受け取らない
+ * 部屋の決定と fail-closed の理屈は {@link resolveKnowledgeRequest} 側に置いてある。
  *
- * 知識検索BOT の部屋には外部の人が居る。channelId を引数にすると、prompt injection
- * で「別の部屋の id で検索しろ」と言わせるだけで他ルームの知識が読める。boswell 側の
- * scope は channelId をキーに引かれる (`daemon/src/routes/run.ts`) ので、ここが
- * そのまま公開範囲の決定点になる。
- *
- * そのため部屋は container の申告ではなく **sender token から host 側で解決する**
- * (ADR-0020)。token は host が inbound の各メッセージに打刻したもので、container は
- * 自分の部屋のものしか持っていない。偽造すれば解決できず、本物を使えば自分の部屋に
- * 解決される。`channelId` / `channelContext` を body に混ぜても読まない。
- *
- * ## fail-closed
- *
- * 解決できない・期限切れ・知識検索BOT 以外の agent group の token・権限分離運用でない
- * host — いずれも **boswell に問い合わせる前に**断る。疑わしい要求を一度でも通すと
- * 公開範囲外の知識が返る側に倒れるため、判断を後段に委ねない。
+ * Authorization は必須。boswell の auto-auth 免除は `body.channelContext` の有無で
+ * 発火する (`daemon/src/middleware/auth.ts`) が、本エンドポイントが受けるのは
+ * `channelId` なので免除されない。付け忘れると実行時に必ず 401 になる。
  */
-import { getMessagingGroup } from '../../db/messaging-groups.js';
-import { resolveDaemonEnv } from '../daemon-env.js';
-import { getPermissionSplitConfig } from '../permission-split.js';
-import { resolveSenderToken } from '../sender-token.js';
+import {
+  BAD_REQUEST_ERROR,
+  INDEX_UNAVAILABLE_ERROR,
+  KNOWLEDGE_TIMEOUT_MS,
+  resolveKnowledgeRequest,
+} from './knowledge-request.js';
 
-const POLL_INTERVAL_MS = Number(process.env.DESHI_KNOWLEDGE_POLL_INTERVAL_MS ?? 2000);
-const TIMEOUT_MS = Number(process.env.DESHI_KNOWLEDGE_TIMEOUT_MS ?? 180000);
-
-const UNVERIFIED_ROOM_ERROR = 'この部屋からの質問として確認できませんでした';
 const UNAVAILABLE_ERROR = '知識検索を利用できませんでした';
-/**
- * 打ち切ってもこちらから job を取り下げる手段は無い。boswell は「まだ誰も結果を
- * 取りに来ていない」job を 60 秒後に channel へ push する (`daemon/src/routes/run.ts`
- * の fallback push) ので、待つのをやめた後で回答が遅れて届く。
- * 「答えられなかった」と言い切ると、その後に届く回答と食い違う。
- */
-const TIMEOUT_ERROR = '時間がかかっています。答えが出たらこのチャンネルに投稿されます';
 
 export interface DaemonKnowledgeSearchRequest {
   query: string;
   senderToken: string;
+  limit?: number;
 }
 
-export type DaemonKnowledgeSearchResponse = { ok: true; answer: string } | { ok: false; error: string };
-
-interface JobStatusResponse {
-  status: 'pending' | 'completed' | 'failed';
-  result?: string;
+export interface KnowledgeSearchResult {
+  docId: string;
+  name: string;
+  score: number;
+  snippet: string;
 }
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+export type DaemonKnowledgeSearchResponse =
+  | { ok: true; results: KnowledgeSearchResult[] }
+  | { ok: false; error: string };
 
 export async function daemonKnowledgeSearchHandler(body: unknown): Promise<DaemonKnowledgeSearchResponse> {
   const req = body as Partial<DaemonKnowledgeSearchRequest> | null;
-  if (!req || typeof req.query !== 'string' || req.query.trim() === '' || typeof req.senderToken !== 'string') {
-    return { ok: false, error: UNVERIFIED_ROOM_ERROR };
+  if (
+    !req ||
+    typeof req.query !== 'string' ||
+    req.query.trim() === '' ||
+    (req.limit !== undefined && (!Number.isInteger(req.limit) || req.limit <= 0))
+  ) {
+    return { ok: false, error: BAD_REQUEST_ERROR };
   }
 
-  const config = getPermissionSplitConfig();
-  if (!config) return { ok: false, error: UNAVAILABLE_ERROR };
+  const context = resolveKnowledgeRequest(req.senderToken, UNAVAILABLE_ERROR);
+  if (!context.ok) return context;
 
-  const sender = resolveSenderToken(req.senderToken);
-  if (!sender || sender.agent_group_id !== config.knowledge_agent_group_id) {
-    return { ok: false, error: UNVERIFIED_ROOM_ERROR };
-  }
-
-  const messagingGroup = getMessagingGroup(sender.messaging_group_id);
-  if (!messagingGroup) return { ok: false, error: UNVERIFIED_ROOM_ERROR };
-
-  const { url, secret } = resolveDaemonEnv();
-  if (!secret) return { ok: false, error: UNAVAILABLE_ERROR };
-
-  const deadline = Date.now() + TIMEOUT_MS;
   try {
-    const runResponse = await fetch(`${url}/run`, {
+    const response = await fetch(`${context.url}/knowledge/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        input: `/boswell-knowledge-search ${req.query}`,
-        channelContext: {
-          channel: messagingGroup.channel_type,
-          platformId: messagingGroup.platform_id,
-          threadId: null,
-        },
-      }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${context.secret}:nanoclaw`,
+      },
+      body: JSON.stringify({ channelId: context.channelId, query: req.query, limit: req.limit }),
+      signal: AbortSignal.timeout(KNOWLEDGE_TIMEOUT_MS),
     });
-    if (runResponse.status !== 202) return { ok: false, error: UNAVAILABLE_ERROR };
+    if (response.status === 503) return { ok: false, error: INDEX_UNAVAILABLE_ERROR };
+    if (!response.ok) return { ok: false, error: UNAVAILABLE_ERROR };
 
-    const runData = (await runResponse.json()) as { jobId?: string };
-    if (!runData.jobId) return { ok: false, error: UNAVAILABLE_ERROR };
-
-    while (Date.now() < deadline) {
-      const jobResponse = await fetch(`${url}/jobs/${runData.jobId}`, {
-        headers: { Authorization: `Bearer ${secret}:nanoclaw` },
-        signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
-      });
-      if (!jobResponse.ok) return { ok: false, error: UNAVAILABLE_ERROR };
-
-      const job = (await jobResponse.json()) as JobStatusResponse;
-      if (job.status === 'completed') {
-        return typeof job.result === 'string'
-          ? { ok: true, answer: job.result }
-          : { ok: false, error: UNAVAILABLE_ERROR };
-      }
-      if (job.status === 'failed') return { ok: false, error: UNAVAILABLE_ERROR };
-
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      await sleep(Math.min(POLL_INTERVAL_MS, remaining));
-    }
-    // eslint-disable-next-line no-catch-all/no-catch-all -- 例外の中身に関わらず「答えない」に倒す
+    const data = (await response.json()) as { results?: unknown };
+    if (!Array.isArray(data.results)) return { ok: false, error: UNAVAILABLE_ERROR };
+    return { ok: true, results: data.results.map(pickResultFields) };
+    // eslint-disable-next-line no-catch-all/no-catch-all -- 内部情報を返さず fail-closed にする
   } catch {
-    return { ok: false, error: Date.now() >= deadline ? TIMEOUT_ERROR : UNAVAILABLE_ERROR };
+    return { ok: false, error: UNAVAILABLE_ERROR };
   }
+}
 
-  return { ok: false, error: TIMEOUT_ERROR };
+/**
+ * boswell が返した hit から、container に渡す分だけを取り出す。
+ *
+ * 素通しにすると、boswell が将来フィールドを足したとき (path 等) にそれがそのまま
+ * 外部の人の居る部屋の agent へ抜ける。公開範囲を絞るための BOT なので、増えるときは
+ * 明示的に足す側に倒す。
+ */
+function pickResultFields(hit: unknown): KnowledgeSearchResult {
+  const h = (hit ?? {}) as Record<string, unknown>;
+  return {
+    docId: typeof h.docId === 'string' ? h.docId : '',
+    name: typeof h.name === 'string' ? h.name : '',
+    score: typeof h.score === 'number' ? h.score : 0,
+    snippet: typeof h.snippet === 'string' ? h.snippet : '',
+  };
 }

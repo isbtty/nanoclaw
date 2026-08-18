@@ -24,6 +24,7 @@ import { daemonGogHandler } from './deshi_daemon_gog.js';
 import { daemonSendFileToChatHandler } from './deshi_daemon_send_file_to_chat.js';
 import { daemonPushFileToRawHandler } from './deshi_daemon_push_file_to_raw.js';
 import { daemonKnowledgeSearchHandler } from './deshi_daemon_knowledge_search.js';
+import { daemonKnowledgeReadHandler } from './deshi_daemon_knowledge_read.js';
 
 export type HostToolHandler = (body: unknown) => Promise<unknown>;
 
@@ -61,3 +62,4 @@ handlers.deshi_daemon_send_file_to_chat = daemonSendFileToChatHandler as HostToo
 // 受ける (host-tools-server の 20 MiB body 制限内に収まる必要あり)。
 handlers.deshi_daemon_push_file_to_raw = daemonPushFileToRawHandler as HostToolHandler;
 handlers.deshi_daemon_knowledge_search = daemonKnowledgeSearchHandler as HostToolHandler;
+handlers.deshi_daemon_knowledge_read = daemonKnowledgeReadHandler as HostToolHandler;

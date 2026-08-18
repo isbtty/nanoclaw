@@ -6,14 +6,15 @@
  *
  * 公開する tool:
  *   - health                   : bridge 自身の生存確認 (`POST /tools/health`)
- *   - daemon_knowledge_search  : このチャンネルの公開範囲だけを検索して答える
+ *   - daemon_knowledge_search  : このチャンネルの公開範囲だけを検索する
+ *   - daemon_knowledge_read    : 検索で得た資料の本文を読み取る
  *   - boswell_run_start        : deshi daemon の POST /run を叩く
  *   - boswell_run_poll         : deshi daemon の GET /jobs/:jobId を long polling
  *   - daemon_send_file_to_chat : deshi-raw/deshi-wiki 配下のファイルを現在のチャットに送る
  *   - daemon_push_file_to_raw  : container 内のファイル (Telegram 添付等) を
  *                                deshi-raw の inbox/ または outputs/ に push (ADR-0008)
  *
- * DESHI_MCP_PROFILE=knowledge のときは health と daemon_knowledge_search だけを登録する
+ * DESHI_MCP_PROFILE=knowledge のときは health と上記の知識検索 tool 2 本だけを登録する
  * (ADR-0021 §4)。
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
@@ -55,7 +56,7 @@ import { hostFetch } from './host-fetch.js';
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
 /**
  * 知識検索BOT 用の絞り込み profile (.deshi/adr/0021-bot-permission-split.md §4)。
- * true のとき `health` と `daemon_knowledge_search` 以外を登録しない。外部の人が居る
+ * true のとき `health` と知識検索 tool 2 本以外を登録しない。外部の人が居る
  * 部屋で動くため、skill 実行とファイル操作の口を最初から生やさない。
  */
 const KNOWLEDGE_PROFILE = process.env.DESHI_MCP_PROFILE === 'knowledge';
@@ -270,9 +271,16 @@ function readSenderToken(): string | undefined {
 
 server.tool(
   'daemon_knowledge_search',
-  '現在の部屋で公開が許可された知識だけを検索して質問に回答する。ユーザーの質問を query にそのまま渡す。',
-  { query: z.string() },
+  '現在の部屋で公開が許可された知識だけを検索し、資料の引換IDと抜粋を返す。',
+  { query: z.string(), limit: z.number().int().positive().optional() },
   async (args) => callHostTool('deshi_daemon_knowledge_search', { ...args, senderToken: readSenderToken() }),
+);
+
+server.tool(
+  'daemon_knowledge_read',
+  'daemon_knowledge_search で得た docId を使い、現在の部屋で公開が許可された資料の本文を読む。',
+  { docId: z.string() },
+  async (args) => callHostTool('deshi_daemon_knowledge_read', { ...args, senderToken: readSenderToken() }),
 );
 
 // ─────────────────────────────────────────────────────────────

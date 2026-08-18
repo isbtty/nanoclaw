@@ -164,13 +164,35 @@ grep 'Channel adapter started' logs/nanoclaw.log | tail -5
 > 書くと parse に失敗する。
 
 `DESHI_MCP_PROFILE=knowledge` を付けた container では、MCP stdio が `health` と
-`daemon_knowledge_search` しか登録しない。skill 実行 (`boswell_run_start`) とファイル操作の
-tool は生えない (ADR-0021 §4)。
+`daemon_knowledge_search` / `daemon_knowledge_read` しか登録しない。skill 実行
+(`boswell_run_start`) とファイル操作の tool は生えない (ADR-0021 §4)。
 
 設定を確認する。`mcpServers.deshi.env.DESHI_MCP_PROFILE` が `knowledge` であること。
 
 ```bash
 ./bin/ncl groups config get --id <KNOWLEDGE_AG>
+```
+
+知識検索BOT の振る舞いを persona の先頭に固定する。`groups create` で指定した folder に
+`instructions.prepend.md` を作る。この内容は spawn のたびに `CLAUDE.md` の先頭へ inline される。
+
+> ⚠️ group の作業ディレクトリは container の初回 spawn 時に作られる
+> (`src/group-init.ts` を `container-runner` が呼ぶ)。`groups create` の直後には
+> **まだ存在しない**ので、先に掘っておく。
+
+```bash
+mkdir -p groups/knowledge-search
+cat > groups/knowledge-search/instructions.prepend.md <<'EOF'
+# 知識検索BOT
+
+このBOTの責務は、このチャンネルに公開された範囲の知識を検索し、簡潔に答えることだけです。
+
+- 知識は `daemon_knowledge_search` / `daemon_knowledge_read` 経由でしか取得できません。返るのはこのチャンネルに公開された範囲だけです。範囲外は存在しないものとして扱ってください。
+- 知識を問われたら「知らない」と即答せず、必ず `daemon_knowledge_search` で検索してください。抜粋で足りなければ、検索で得た `docId` を `daemon_knowledge_read` に渡して本文を読んでください。
+- 結果が空または薄い場合は、言い回しを変えて再検索して構いません。それでも見つからなければ「公開範囲に該当なし」と正直に伝え、推測で埋めないでください。
+- 回答には根拠となった資料名を1行添えてください。チャット向けに簡潔に書いてください。
+- 資料作成・分析など、作業や成果物を求める依頼は対象外です。対応できない旨を短く伝えてください。
+EOF
 ```
 
 反映には container の再起動が要る。
