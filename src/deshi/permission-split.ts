@@ -1,5 +1,5 @@
 /**
- * 権限分離モードの適用範囲 (.deshi/adr/0019-bot-permission-split.md §0)。
+ * 権限分離モードの適用範囲 (.deshi/adr/0021-bot-permission-split.md §0)。
  *
  * BOT 権限分離は一部の組織にだけ必要な構成なので、**既存の挙動は一切変えない**
  * のが原則。挙動が変わるのは、セットアップスキルがここに登録した agent group
@@ -33,10 +33,10 @@ export function enablePermissionSplit(agentGroupId: string): void {
  * DM への知識スコープリンク自動発行を飛ばすか。
  *
  * 権限分離モードの組織では、知識検索はチャンネルでのみ行い DM は対象外と決めて
- * いる (ADR-0019)。DM の channel scope は「その人の私的チャットに知識を開ける」
+ * いる (ADR-0021)。DM の channel scope は「その人の私的チャットに知識を開ける」
  * という誰も依頼していない権限付与になるため。
  *
- * **それ以外の組織では従来どおり発行する** (ADR-0019 §0)。権限分離を入れずに
+ * **それ以外の組織では従来どおり発行する** (ADR-0021 §0)。権限分離を入れずに
  * 使う場合、bot と DM でやり取りしたい場面は普通にあり、そこで知識を引けないと
  * 困る。`/update-knowledge-scope` からの明示発行はどちらの場合も通る。
  */
@@ -44,7 +44,7 @@ export function skipsDmScopeLink(agentGroupId: string, isGroup: boolean): boolea
   return !isGroup && isPermissionSplitGroup(agentGroupId);
 }
 
-// ── host 単位の設定 (ADR-0019 §5.1) ──
+// ── host 単位の設定 (ADR-0021 §5.1) ──
 
 export interface PermissionSplitConfig {
   /** 知識検索BOT の agent group。招待先の解決に使う。 */

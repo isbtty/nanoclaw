@@ -14,7 +14,7 @@
  *                                deshi-raw の inbox/ または outputs/ に push (ADR-0008)
  *
  * DESHI_MCP_PROFILE=knowledge のときは health と daemon_knowledge_search だけを登録する
- * (ADR-0019 §4)。
+ * (ADR-0021 §4)。
  *
  * agent 側 tool 名 (例: `daemon_run_skill`) と HTTP path 側 (例:
  * `deshi_daemon_run_skill`) は 2 階層命名で別。本ファイル内の `server.tool(...)`
@@ -54,7 +54,7 @@ import { hostFetch } from './host-fetch.js';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
 /**
- * 知識検索BOT 用の絞り込み profile (.deshi/adr/0019-bot-permission-split.md §4)。
+ * 知識検索BOT 用の絞り込み profile (.deshi/adr/0021-bot-permission-split.md §4)。
  * true のとき `health` と `daemon_knowledge_search` 以外を登録しない。外部の人が居る
  * 部屋で動くため、skill 実行とファイル操作の口を最初から生やさない。
  */

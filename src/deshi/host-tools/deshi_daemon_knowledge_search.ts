@@ -1,5 +1,5 @@
 /**
- * Handler: 知識検索BOT 専用の窓口 (.deshi/adr/0019-bot-permission-split.md §4)。
+ * Handler: 知識検索BOT 専用の窓口 (.deshi/adr/0021-bot-permission-split.md §4)。
  *
  * HTTP path : POST /tools/deshi_daemon_knowledge_search
  * agent tool: mcp__deshi__daemon_knowledge_search

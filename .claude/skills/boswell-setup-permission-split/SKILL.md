@@ -1,6 +1,6 @@
 ---
 name: boswell-setup-permission-split
-description: この host を権限分離運用にする初回セットアップ (ADR-0019 §5.3)。知識検索BOT 用の 2 つ目の Slack App をマニフェストから作らせ、agent group を用意し、permission_split_config を書き込むまでを誘導する。host 1 台につき 1 回。トリガー: "権限分離", "知識検索BOTを追加", "tier A", "外部研究生", "setup permission split" (project)
+description: この host を権限分離運用にする初回セットアップ (ADR-0021 §5.3)。知識検索BOT 用の 2 つ目の Slack App をマニフェストから作らせ、agent group を用意し、permission_split_config を書き込むまでを誘導する。host 1 台につき 1 回。トリガー: "権限分離", "知識検索BOTを追加", "tier A", "外部研究生", "setup permission split" (project)
 user-invocable: true
 allowed-tools: Bash, Read, Edit, AskUserQuestion
 ---
@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Edit, AskUserQuestion
 ## 概要
 
 この host を**権限分離運用**にする。完了すると、以後のチャンネル登録の承認に
-権限分離の配線が自動で続くようになる (ADR-0019 §5.2)。
+権限分離の配線が自動で続くようになる (ADR-0021 §5.2)。
 
 - **host 1 台につき 1 回**だけ実行する。チャンネルごとの設定は不要
 - **nanoclaw host 上 (Mac mini) で operator が実行**する
@@ -107,7 +107,7 @@ ls src/deshi/channels/slack-instances.ts
 
 **スコープが管理者BOT より狭いのは意図的**:
 
-- `im:*` が無い — 知識検索は**チャンネルでのみ**受け付ける (ADR-0019 §2)
+- `im:*` が無い — 知識検索は**チャンネルでのみ**受け付ける (ADR-0021 §2)
 - `channels:manage` が無い — チャンネルへの招待は管理者BOT 側が行う
 - 書き込みは `chat:write` (回答の投稿) だけ
 
@@ -137,7 +137,7 @@ grep 'Channel adapter started' logs/nanoclaw.log | tail -5
 
 ### 4. 知識検索BOT 用の agent group を作る
 
-全チャンネル共通で 1 つだけ作る (ADR-0019 §2)。
+全チャンネル共通で 1 つだけ作る (ADR-0021 §2)。
 
 ```bash
 ./bin/ncl groups create --name "Knowledge Search" --folder knowledge-search
@@ -165,7 +165,7 @@ grep 'Channel adapter started' logs/nanoclaw.log | tail -5
 
 `DESHI_MCP_PROFILE=knowledge` を付けた container では、MCP stdio が `health` と
 `daemon_knowledge_search` しか登録しない。skill 実行 (`boswell_run_start`) とファイル操作の
-tool は生えない (ADR-0019 §4)。
+tool は生えない (ADR-0021 §4)。
 
 設定を確認する。`mcpServers.deshi.env.DESHI_MCP_PROFILE` が `knowledge` であること。
 
@@ -251,7 +251,7 @@ sqlite3 data/v2.db 'DELETE FROM permission_split_groups;'
 
 ## 関連
 
-- 設計: `.deshi/adr/0019-bot-permission-split.md` (§5.3 が本スキル)
+- 設計: `.deshi/adr/0021-bot-permission-split.md` (§5.3 が本スキル)
 - instance 機構: `.deshi/adr/0018-slack-multi-workspace.md`
 - 追加 WS の配線: `/boswell-manage-slack-workspaces`
 - 特権admin の管理: `/boswell-manage-nanoclaw-admins`

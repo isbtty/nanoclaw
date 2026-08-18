@@ -67,7 +67,7 @@ export async function dispatch(
       const allowed = new Set(['groups', 'sessions', 'destinations', 'members']);
       // Only allow whitelisted resources and general commands (no resource, like help)
       // 権限分離モードの agent group だけ、この allowlist が `roles` まで広がる
-      // (.deshi/adr/0019 §3)。それ以外は下の判定がそのまま効く。
+      // (.deshi/adr/0021 §3)。それ以外は下の判定がそのまま効く。
       if (cmd.resource && !allowed.has(cmd.resource) && !allowsResourceUnderGroupScope(ctx.agentGroupId, req.command)) {
         return err(req.id, 'forbidden', `CLI access is scoped to this agent group. Cannot access "${cmd.resource}".`);
       }
@@ -121,7 +121,7 @@ export async function dispatch(
 
   if (ctx.caller !== 'host' && cmd.access === 'approval') {
     // 権限分離モードでは、権限操作は依頼した本人が admin なら即時実行する
-    // (.deshi/adr/0019 §6)。それ以外は 'defer' が返り、下の承認カード経路に落ちる。
+    // (.deshi/adr/0021 §6)。それ以外は 'defer' が返り、下の承認カード経路に落ちる。
     //
     // opts.approved (承認カードからの replay) でも通すのは、操作対象の制約を
     // 効かせるため。承認を挟んでも、チャットから global 権限を触らせない。

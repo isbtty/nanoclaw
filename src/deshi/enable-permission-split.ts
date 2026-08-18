@@ -1,6 +1,6 @@
 /**
  * 初回セットアップの最後の一手 — この host を権限分離運用にする
- * (.deshi/adr/0019-bot-permission-split.md §5.3)。
+ * (.deshi/adr/0021-bot-permission-split.md §5.3)。
  *
  *   SLACK_KNOWLEDGE_BOT_TOKEN=xoxb-... pnpm exec tsx src/deshi/enable-permission-split.ts \
  *     --knowledge-group <agent group id> --knowledge-instance slack-<suffix>

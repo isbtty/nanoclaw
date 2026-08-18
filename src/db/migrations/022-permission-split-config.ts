@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
 
 /**
- * この host が権限分離運用かどうか (.deshi/adr/0019-bot-permission-split.md §5.1)。
+ * この host が権限分離運用かどうか (.deshi/adr/0021-bot-permission-split.md §5.1)。
  *
  * agent group 単位の `permission_split_groups` (migration 021) とは層が違う:
  *

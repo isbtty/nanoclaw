@@ -1,5 +1,5 @@
 /**
- * チャンネル自動セットアップで必要な Slack Web API 呼び出し (ADR-0019 §5.2)。
+ * チャンネル自動セットアップで必要な Slack Web API 呼び出し (ADR-0021 §5.2)。
  *
  * chat-sdk のアダプタはチャンネル情報の取得と bot の招待を公開していないため、
  * ここだけ host から Slack Web API を直接叩く。使うのは primary instance
@@ -52,7 +52,7 @@ async function call(method: string, body: Record<string, unknown>): Promise<Reco
  * チャンネルを作った人の Slack user id。取れなければ `null`。
  *
  * Slack の「チャンネル管理者」ロールは公開 Web API から一覧できないため、
- * 代わりに creator を候補として使う (ADR-0019 §5.2)。
+ * 代わりに creator を候補として使う (ADR-0021 §5.2)。
  */
 export async function fetchChannelCreator(channelId: string): Promise<string | null> {
   const data = await call('conversations.info', { channel: channelId });

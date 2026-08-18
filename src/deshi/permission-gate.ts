@@ -1,6 +1,6 @@
 /**
  * 権限操作を「依頼した本人が admin なら即時実行」に切り替えるゲート
- * (.deshi/adr/0019-bot-permission-split.md §6)。
+ * (.deshi/adr/0021-bot-permission-split.md §6)。
  *
  * nanoclaw の既定では、container から来る `access: 'approval'` のコマンドは
  * 誰の依頼かに関わらず承認カードに回る。権限分離モードの組織では
@@ -9,7 +9,7 @@
  *
  * ## 何を許すかは「誰が」だけでなく「何を」で決める
  *
- * 依頼者が admin であることは必要条件でしかない。ADR-0019 §3 は
+ * 依頼者が admin であることは必要条件でしかない。ADR-0021 §3 は
  * **特権admin (global admin) をチャットから作れないこと**を要求しているので、
  * 操作の対象も縛る:
  *
@@ -26,12 +26,12 @@
  * ## 判定できないときは断らない
  *
  * 依頼者を特定できない (発言が混在している / 期限切れ 等) 場合は `defer` を返し、
- * **従来どおり承認カードに回す**。ADR-0019 §6 が求めているのは admin の即時化で
+ * **従来どおり承認カードに回す**。ADR-0021 §6 が求めているのは admin の即時化で
  * あって、フォールバックの撤去ではない。`deny` は「依頼者は分かったが権限が無い」
  * ときだけに絞る。
  *
  * 権限分離モードでない agent group は常に `defer`。既存の挙動は一切変えない
- * (ADR-0019 §0)。
+ * (ADR-0021 §0)。
  */
 import { hasAdminPrivilege } from '../modules/permissions/db/user-roles.js';
 import { isPermissionSplitGroup } from './permission-split.js';
@@ -57,7 +57,7 @@ const GROUP_SCOPE_EXTRA_COMMANDS = new Set(['roles-grant', 'roles-revoke']);
  *
  * コアの既定は `groups / sessions / destinations / members` で `roles` を含まない。
  * 権限分離モードでは「チャンネル内 admin が同じチャンネルの admin を増やす」が
- * 要件 (ADR-0019 §3) なので付与・剥奪だけを通す。**それ以外の agent group には
+ * 要件 (ADR-0021 §3) なので付与・剥奪だけを通す。**それ以外の agent group には
  * 一切影響しない** — 非分離なら false を返し、コア側の判定がそのまま効く。
  *
  * resource 単位ではなくコマンド単位で広げるのは、`roles list` が resource 定義に

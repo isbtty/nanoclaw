@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
 
 /**
- * 権限分離モードの適用範囲 (.deshi/adr/0019-bot-permission-split.md §0)。
+ * 権限分離モードの適用範囲 (.deshi/adr/0021-bot-permission-split.md §0)。
  *
  * BOT 権限分離は一部の組織にだけ必要な構成であり、既存の全顧客に配るものでは
  * ない。「セットアップ済みかどうか」をこの表で持ち、分岐はすべてここを見る。

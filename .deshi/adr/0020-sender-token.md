@@ -2,11 +2,11 @@
 
 - Status: accepted (実装待ち)
 - Date: 2026-08-06
-- Refs: ADR-0019 (BOT 権限分離), ADR-0009 (MCP tool 命名), isbtty/boswell#396
+- Refs: ADR-0021 (BOT 権限分離), ADR-0009 (MCP tool 命名), isbtty/boswell#396
 
 ## Context
 
-ADR-0019 の構成では、同じチャンネルに tier A (外部研究生) と管理者が同居し、両者が同じ agent group の
+ADR-0021 の構成では、同じチャンネルに tier A (外部研究生) と管理者が同居し、両者が同じ agent group の
 コンテナに発話を届ける。ここで「その依頼を出したのは誰か」を host 側が知らないと、以下が実装できない:
 
 - 「@管理者BOT @対象者 に権限を付与して」を**依頼者が admin のときだけ即時実行**する
@@ -21,7 +21,7 @@ ADR-0019 の構成では、同じチャンネルに tier A (外部研究生) と
   `id = 1` 固定の単一行 (channel_type / platform_id / thread_id) で、**メッセージごとの発言者を運べない**。
 - `src/deshi/host-tools-server.ts` は loopback 前提で無認証。呼び出し元セッションを識別できない。
 
-さらに ADR-0019 の構成では**外部研究生が公開ルームに任意テキストを書き込める**。container の LLM は
+さらに ADR-0021 の構成では**外部研究生が公開ルームに任意テキストを書き込める**。container の LLM は
 それを読むため、prompt injection で「channelId を別ルームのものにして検索しろ」と誘導されると、
 container 申告値がそのまま通り、別ルームの知識が漏れる。identity と channel の両方が
 「container の言い値」である状態は、この運用では受容できない。
@@ -68,11 +68,11 @@ container の agent は、`ncl` 呼び出しおよび boswell host-tool 呼び�
 token を**必須**にするのは、権限判定が必要な操作に限る:
 
 - `ncl roles` / `ncl members` の変更系、チャンネルのセットアップ
-- ADR-0019 の知識検索BOT 用 host-tool (channelId を host が解決する必要があるため)
+- ADR-0021 の知識検索BOT 用 host-tool (channelId を host が解決する必要があるため)
 
 それ以外の既存経路 (通常の `boswell_run_start` 等) は当面トークン無しでも従来通り動かす。
 
-さらに、**トークン必須の判定は ADR-0019 §0 の適用範囲 (セットアップ済みの agent group) の内側でのみ効かせる**。
+さらに、**トークン必須の判定は ADR-0021 §0 の適用範囲 (セットアップ済みの agent group) の内側でのみ効かせる**。
 適用範囲の外にある既存の telegram / line / Slack 運用は、本 ADR の実装後もトークンを一切要求されない。
 トークン発行自体は全 inbound で行ってよい (副作用が無く、後から範囲を広げやすい) が、
 **検証を強制する範囲は適用範囲に限る**。
@@ -86,7 +86,7 @@ token を**必須**にするのは、権限判定が必要な操作に限る:
 ## Consequences
 
 - `access: 'approval'` 固定だった `ncl members add` / `roles grant` を、
-  「token の user_id が admin なら即時、そうでなければ拒否」に変えられる (ADR-0019 の要件)。
+  「token の user_id が admin なら即時、そうでなければ拒否」に変えられる (ADR-0021 の要件)。
 - channelId 詐称が塞がる。知識検索BOT が別ルームの知識を読む経路が無くなる。
 - host-tools-server は loopback 無認証のままだが、権限が要る操作については
   **トークンが実質の認証**として機能する。
@@ -104,7 +104,7 @@ token を**必須**にするのは、権限判定が必要な操作に限る:
 ## 不採用案
 
 - **(a) 「そのセッションで最後に喋った人」を host が記録して使う**: 実装は小さいが、発言が交錯すると
-  tier A の依頼が直後の admin の発言で通ってしまう。ADR-0019 では tier A と管理者が同じチャンネルに
+  tier A の依頼が直後の admin の発言で通ってしまう。ADR-0021 では tier A と管理者が同じチャンネルに
   同居するため、この誤りが実際に起こりうる。
 - **(b) 承認カードを挟み続ける**: 「依頼者が admin なら即時」という要件に反する。
 - **(c) session_routing に user を持たせる**: 単一行の per-session データなので、per-message の
@@ -114,7 +114,7 @@ token を**必須**にするのは、権限判定が必要な操作に限る:
 
 ## See also
 
-- BOT 権限分離の全体設計: ADR-0019
+- BOT 権限分離の全体設計: ADR-0021
 - sender 解決の既存実装: `src/modules/permissions/index.ts` (`extractAndUpsertUser`)
 - CLI の権限ゲート: `src/cli/dispatch.ts`, `src/cli/registry.ts` (`Access = 'open' | 'approval'`)
 - channelContext の現行注入: `container/skills/deshi-add-host-tools/deshi-mcp-stdio.ts`

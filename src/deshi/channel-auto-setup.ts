@@ -1,13 +1,13 @@
 /**
  * チャンネル登録の承認が完了した直後に、権限分離に必要な配線を続けて行う
- * (.deshi/adr/0019-bot-permission-split.md §5.2)。
+ * (.deshi/adr/0021-bot-permission-split.md §5.2)。
  *
  * セットアップ専用の合言葉は用意しない。**承認カードを押せるのは owner/admin だけ**
  * なので、承認の完了そのものが「特権admin の意思表示」になっている。招待 → メンション
  * → 承認 → 返事、という既存の導線にそのまま乗る。
  *
  * `permission_split_config` の行が無い host では**何もしない**。既存環境の挙動は
- * 1 ミリも変わらない (ADR-0019 §0)。
+ * 1 ミリも変わらない (ADR-0021 §0)。
  *
  * ## 何があっても承認フローを止めない
  *
@@ -55,7 +55,7 @@ async function setUpChannel(agentGroupId: string, messagingGroupId: string, appr
 
   const mg = getMessagingGroup(messagingGroupId);
   if (!mg) return;
-  // DM は権限分離の対象外。知識検索はチャンネルでのみ受け付ける (ADR-0019 §2)。
+  // DM は権限分離の対象外。知識検索はチャンネルでのみ受け付ける (ADR-0021 §2)。
   if (mg.is_group === 0) return;
   // 知識検索BOT 自身の agent group を再セットアップしない。
   if (agentGroupId === config.knowledge_agent_group_id) return;
@@ -103,7 +103,7 @@ async function setUpChannel(agentGroupId: string, messagingGroupId: string, appr
  *
  *   - 管理者BOT 側 … 既存のまま (メンバー制)
  *   - 知識検索BOT 側 … `public` + `sender_scope='all'`。外部の人が承認を待たずに
- *     質問できる必要がある (ADR-0019 の tier A)
+ *     質問できる必要がある (ADR-0021 の tier A)
  *
  * 既に行があれば何もしない (再実行・二重承認で壊れない)。
  */
@@ -171,7 +171,7 @@ function grantScopedAdmin(userId: string, agentGroupId: string, grantedBy: strin
  *
  * Slack の「チャンネル管理者」ロールは公開 API から引けないため creator を候補にする。
  * どちらも取れない場合は特権admin だけが admin になり、あとはチャット経由で
- * 追加してもらう (ADR-0019 §5.2)。
+ * 追加してもらう (ADR-0021 §5.2)。
  */
 async function resolveChannelManager(channelId: string, approverUserId: string): Promise<string | null> {
   const creator = await fetchChannelCreator(channelId);
@@ -184,7 +184,7 @@ async function resolveChannelManager(channelId: string, approverUserId: string):
  * Slack Web API を叩ける相手か。
  *
  * 叩くのは primary instance (管理者BOT) の bot token 固定なので、named instance の
- * チャンネルには効かない。ADR-0019 §1 では管理者BOT が primary なので通常はここを
+ * チャンネルには効かない。ADR-0021 §1 では管理者BOT が primary なので通常はここを
  * 通るが、多ワークスペース構成 (ADR-0018) で他 instance のチャンネルが来たときに
  * 誤った workspace を触らないよう明示的に外す。
  */

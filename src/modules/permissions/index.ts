@@ -504,7 +504,7 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 
   deletePendingChannelApproval(row.messaging_group_id);
 
-  // 権限分離運用の host なら、続けて配線する (.deshi/adr/0019 §5.2)。
+  // 権限分離運用の host なら、続けて配線する (.deshi/adr/0021 §5.2)。
   // そうでなければ何も起きない。内部で全例外を握るので replay を止めない。
   await runChannelAutoSetup(targetAgentGroupId, row.messaging_group_id, approverId);
 
