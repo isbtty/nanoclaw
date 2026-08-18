@@ -145,8 +145,39 @@ grep 'Channel adapter started' logs/nanoclaw.log | tail -5
 
 出力の `id` を控える。以降 `<KNOWLEDGE_AG>` と表記する。
 
-> tool surface (この BOT に何を持たせるか) の設定は本スキルの範囲外。
-> ADR-0019 §4 の host-tool が入るまでは、この agent group は知識検索の器だけの状態。
+**ここで一度 nanoclaw を再起動する** (`/boswell-restart-nanoclaw`)。`groups create` は
+`agent_groups` に 1 行入れるだけで、`container_configs` の行は起動時の backfill
+(`src/backfill-container-configs.ts`) が作る。行が無いまま次のコマンドを叩くと
+`No container config for group` で落ちる。
+
+再起動後、deshi MCP server を追加して知識検索専用 profile を指定する。
+
+```bash
+./bin/ncl groups config add-mcp-server --id <KNOWLEDGE_AG> \
+  --name deshi \
+  --command bun \
+  --args '["run","/app/skills/deshi-add-host-tools/deshi-mcp-stdio.ts"]' \
+  --env '{"DESHI_HOST_URL":"http://host.docker.internal:5180","DESHI_MCP_PROFILE":"knowledge"}'
+```
+
+> `--args` / `--env` は **JSON** で渡す (handler が `JSON.parse` する)。カンマ区切りで
+> 書くと parse に失敗する。
+
+`DESHI_MCP_PROFILE=knowledge` を付けた container では、MCP stdio が `health` と
+`daemon_knowledge_search` しか登録しない。skill 実行 (`boswell_run_start`) とファイル操作の
+tool は生えない (ADR-0019 §4)。
+
+設定を確認する。`mcpServers.deshi.env.DESHI_MCP_PROFILE` が `knowledge` であること。
+
+```bash
+./bin/ncl groups config get --id <KNOWLEDGE_AG>
+```
+
+反映には container の再起動が要る。
+
+```bash
+./bin/ncl groups restart --id <KNOWLEDGE_AG>
+```
 
 ### 5. 導入者を特権admin にする
 
