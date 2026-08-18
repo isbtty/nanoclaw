@@ -98,12 +98,18 @@ deny-by-default なので、DM の channelId に scope を設定しなければ*
 ### 4. 知識検索BOT の tool surface
 
 知識検索BOT の deshi MCP server には `DESHI_MCP_PROFILE=knowledge` を設定する。この profile では
-`health` と `daemon_knowledge_search` だけを登録し、汎用の `boswell_run_start` やファイル操作 tool は公開しない。
-`daemon_knowledge_search` は質問を `/boswell-knowledge-search` 固定で boswell に渡し、回答の生成も boswell 側で
-行う (boswell ADR-0003 / ADR-0010 の「nanoclaw は検閲・配送のみ、判断は boswell」を維持)。
+`health` と `daemon_knowledge_search` / `daemon_knowledge_read` だけを登録し、汎用の
+`boswell_run_start` やファイル操作 tool は公開しない。前者は boswell の `POST /knowledge/search` を直接呼び、
+公開範囲内の資料の `docId` と抜粋を返す。後者は検索で得た `docId` を `POST /knowledge/read` に渡して本文を返す。
+質問ごとに boswell 側で Claude を起動せず、job / polling も行わない。
+
+検索結果から回答を組み立てる作文は container 側の agent が行う。これは boswell ADR-0003 / ADR-0010 の
+「判断は boswell」に対する意図的な例外である。公開範囲の判定は引き続き boswell の
+`ChannelScopeStore` が server 側で完結させ、範囲外を存在しないものとして扱う。container が受け取れる
+情報量は従来から増えないため、追加の権限を渡さずに boswell 側の AI 実行だけを除ける。
 
 `senderToken` は MCP stdio が最新の trigger message から自動注入する。host-tool は token を
-`messaging_groups.platform_id` まで解決して `channelContext` を組み立てるため、agent の入力 schema に
+`messaging_groups.platform_id` まで解決して `channelId` として boswell に渡すため、agent の入力 schema に
 `channelId` / `channelContext` / `senderToken` は載らない。container が別チャンネルを申告して scope を
 広げる経路を作らない。
 
