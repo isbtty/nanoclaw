@@ -115,9 +115,23 @@ ncl groups list
 
 このスキルでは以降のステップで group id を参照する変数 `GROUP_ID` を使う。
 
-## Phase 3: container.json に MCP server entry を追加
+## Phase 3: MCP server entry を追加
 
-対象 group の `container.json` の `mcpServers` セクションに以下のエントリを追加する。既に他の MCP server (gmail 等) が登録されていれば **マージする** (置き換えない)。
+対象 group の container 設定に `deshi` MCP server を登録する。既に他の MCP server (gmail 等) が登録されていれば **マージされる** (置き換えではない)。
+
+```bash
+ncl groups config add-mcp-server --id "$GROUP_ID" \
+  --name deshi \
+  --command bun \
+  --args '["run","/app/skills/deshi-add-host-tools/deshi-mcp-stdio.ts"]' \
+  --env '{"DESHI_HOST_URL":"http://host.docker.internal:5180"}'
+```
+
+> `--args` / `--env` は **JSON** (配列 / オブジェクト) で渡す。handler が `JSON.parse` するため
+> (`src/cli/resources/groups.ts` の `config add-mcp-server`)、カンマ区切りや `KEY=VALUE` で
+> 書くと parse に失敗する。
+
+登録されると `mcpServers` はこの形になる:
 
 ```jsonc
 {
@@ -133,17 +147,24 @@ ncl groups list
 }
 ```
 
-スキルの中身としては `ncl groups config add-mcp-server` を使うのが推奨:
+確認:
 
 ```bash
-ncl groups config add-mcp-server --id "$GROUP_ID" \
-  --name deshi \
-  --command bun \
-  --args 'run,/app/skills/deshi-add-host-tools/deshi-mcp-stdio.ts' \
-  --env 'DESHI_HOST_URL=http://host.docker.internal:5180'
+ncl groups config get --id "$GROUP_ID"
 ```
 
-(コマンドの細部は CLI の現行仕様に合わせて調整)
+設定はこの時点では保存されただけで、走っている container には効かない。反映は Phase 5 の
+`ncl groups restart`。
+
+### group を作ったばかりの場合は先に nanoclaw を再起動する
+
+`ncl groups create --name ... --folder ...` は `agent_groups` に 1 行入れるだけで、
+`container_configs` の行は作らない。行を作るのは host 起動時の backfill
+(`src/backfill-container-configs.ts`、`src/index.ts` から呼ばれる)。行が無い状態で
+`add-mcp-server` を叩くと `No container config for group: <id>` で落ちる。
+
+新規作成した group に配線するときは、`add-mcp-server` の前に一度 nanoclaw を再起動する
+(`/boswell-restart-nanoclaw`)。前から `ncl groups list` に居る group は行があるので不要。
 
 ## Phase 4: host-tools-server の起動方法を選ぶ
 
@@ -229,7 +250,7 @@ curl -s http://127.0.0.1:5180/health | python3 -m json.tool
 
 ## Phase 5: agent group の再起動
 
-container.json を変更したので、走っている container を再起動して新しい `mcpServers` 設定を反映させる。
+Phase 3 の設定変更は保存されているだけなので、走っている container を再起動して新しい `mcpServers` 設定を反映させる。
 
 ```bash
 ncl groups restart --id "$GROUP_ID"
@@ -298,7 +319,7 @@ rm ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist
 ### スキル全体のアンインストール
 
 ```bash
-# 1. group の container.json から "deshi" MCP server entry を削除
+# 1. group の container 設定から "deshi" MCP server entry を削除
 ncl groups config remove-mcp-server --id "$GROUP_ID" --name deshi
 
 # 2. 常駐を停止 (モード 2 を選んでいた場合)
@@ -315,7 +336,9 @@ ncl groups restart --id "$GROUP_ID"
 
 | 症状 | 確認 |
 |---|---|
-| agent が `mcp__deshi__health` を「知らない」と言う | container.json の `mcpServers.deshi` が登録されているか、`ncl groups restart` で再起動したか |
+| agent が `mcp__deshi__health` を「知らない」と言う | `ncl groups config get --id "$GROUP_ID"` で `mcpServers.deshi` が登録されているか、`ncl groups restart` で再起動したか |
+| `add-mcp-server` が `No container config for group: <id>` で落ちる | 作りたての group で `container_configs` の行がまだ無い。nanoclaw を再起動して backfill を走らせてから叩き直す (Phase 3 参照) |
+| `add-mcp-server` が JSON parse エラーで落ちる | `--args` / `--env` をカンマ区切り・`KEY=VALUE` で書いている。JSON 配列 / JSON オブジェクトで渡す |
 | `Failed to reach deshi host service` エラー | host-tools-server が起動しているか (`curl http://127.0.0.1:5180/health`)。モード 2 なら `launchctl list \| grep host-tools` で running 状態を確認 |
 | `command not found: bun` (container 内) | `./container/build.sh` がクリーン完了したか。container 内 stdio MCP server は Bun で動く前提 |
 | プレースホルダが残っている (モード 2) | `sed` の置換が完全に通ったか、`cat ~/Library/LaunchAgents/com.isbtty.nanoclaw.host-tools.plist` で `__PROJECT_ROOT__` 等が残っていないか確認 |
