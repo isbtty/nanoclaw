@@ -18,6 +18,9 @@ import { moduleApprovalsPendingApprovals } from './module-approvals-pending-appr
 import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js';
 import { migration018 } from './018-approvals-approver-user-id.js';
 import { migration019 } from './019-boswell-mcp-key.js';
+import { migration020 } from './020-sender-tokens.js';
+import { migration021 } from './021-permission-split-groups.js';
+import { migration022 } from './022-permission-split-config.js';
 
 export interface Migration {
   version: number;
@@ -52,6 +55,9 @@ export const migrations: Migration[] = [
   migration015,
   migration016,
   migration019,
+  migration020,
+  migration021,
+  migration022,
 ];
 
 /** Row shape of PRAGMA foreign_key_check. Child rowids are stable across a

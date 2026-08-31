@@ -36,6 +36,12 @@ vi.mock('../../delivery.js', () => ({
   getDeliveryAdapter: () => ({ deliver: deliverMock }),
 }));
 
+// Mock the scope-link mint — an outbound HTTP call to the deshi daemon.
+const fetchScopeLinkMock = vi.fn().mockResolvedValue({ url: 'https://scope.test/abc', token: 'tok' });
+vi.mock('../../deshi/fetch-scope-link.js', () => ({
+  fetchDeshiScopeLink: (channelId: string) => fetchScopeLinkMock(channelId),
+}));
+
 // Mock ensureUserDm — look up the owner's preconfigured DM row instead of
 // hitting a real openDM RPC.
 vi.mock('./user-dm.js', () => ({
@@ -102,7 +108,36 @@ beforeEach(async () => {
     .run('telegram:owner', 'telegram', 'mg-dm-owner', now());
 
   deliverMock.mockClear();
+  fetchScopeLinkMock.mockClear();
 });
+
+/** Make ag-1 deshi-backed so the knowledge-scope link path is live. */
+async function enableDeshiMcp() {
+  const { getDb } = await import('../../db/connection.js');
+  getDb()
+    .prepare('INSERT INTO container_configs (agent_group_id, mcp_servers, updated_at) VALUES (?, ?, ?)')
+    .run('ag-1', JSON.stringify({ deshi: { command: 'bun' } }), now());
+}
+
+/** Drive the owner's "Connect to Andy" click for the one pending approval. */
+async function approvePending() {
+  const { getDb } = await import('../../db/connection.js');
+  const { getResponseHandlers } = await import('../../response-registry.js');
+  const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+    messaging_group_id: string;
+  };
+  for (const handler of getResponseHandlers()) {
+    const claimed = await handler({
+      questionId: pending.messaging_group_id,
+      value: 'connect:ag-1',
+      userId: 'owner',
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+    });
+    if (claimed) break;
+  }
+}
 
 afterEach(() => {
   closeDb();
@@ -296,6 +331,96 @@ describe('unknown-channel registration flow', () => {
       .get(pending.messaging_group_id) as { engage_mode: string; engage_pattern: string };
     expect(mga.engage_mode).toBe('pattern');
     expect(mga.engage_pattern).toBe('.');
+  });
+
+  it('approve on a shared channel hands the owner a knowledge-scope setup link', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await enableDeshiMcp();
+
+    await routeInbound(groupMention('chat-scope-link'));
+    await new Promise((r) => setTimeout(r, 10));
+    await approvePending();
+
+    expect(fetchScopeLinkMock).toHaveBeenCalledWith('chat-scope-link');
+  });
+
+  it('権限分離を入れていない組織では、DM でも従来どおり知識スコープの設定リンクを配ること', async () => {
+    const { routeInbound } = await import('../../router.js');
+    await enableDeshiMcp();
+
+    await routeInbound(dmEvent('dm-plain-org'));
+    await new Promise((r) => setTimeout(r, 10));
+    await approvePending();
+
+    expect(fetchScopeLinkMock).toHaveBeenCalledWith('dm-plain-org');
+  });
+
+  it('権限分離を入れた組織では、DM に知識スコープの設定リンクを配らないこと', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { enablePermissionSplit } = await import('../../deshi/permission-split.js');
+    await enableDeshiMcp();
+    enablePermissionSplit('ag-1');
+
+    await routeInbound(dmEvent('dm-scope-link'));
+    await new Promise((r) => setTimeout(r, 10));
+    await approvePending();
+
+    // The approval must have reached wiring — otherwise "no link" proves nothing.
+    expect(getMessagingGroupByPlatform('telegram', 'dm-scope-link')).toBeDefined();
+    const { getDb } = await import('../../db/connection.js');
+    expect(getDb().prepare('SELECT id FROM messaging_group_agents').get()).toBeDefined();
+    expect(fetchScopeLinkMock).not.toHaveBeenCalled();
+  });
+
+  it('新しい agent を作る承認でも、agent 生成からチャンネル配線まで通ること', async () => {
+    const { routeInbound } = await import('../../router.js');
+    const { getResponseHandlers } = await import('../../response-registry.js');
+    const { NEW_AGENT_VALUE } = await import('./channel-approval.js');
+    const { getDb } = await import('../../db/connection.js');
+
+    await routeInbound(groupMention('chat-new-agent'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
+      messaging_group_id: string;
+    };
+    for (const handler of getResponseHandlers()) {
+      const claimed = await handler({
+        questionId: pending.messaging_group_id,
+        value: NEW_AGENT_VALUE,
+        userId: 'owner',
+        channelType: 'telegram',
+        platformId: 'dm-owner',
+        threadId: null,
+      });
+      if (claimed) break;
+    }
+
+    // 承認者は自分の DM に返ってきた名前入力プロンプトに答える。
+    await routeInbound({
+      channelType: 'telegram',
+      platformId: 'dm-owner',
+      threadId: null,
+      message: {
+        id: 'msg-name-input',
+        kind: 'chat' as const,
+        content: JSON.stringify({ senderId: 'owner', senderName: 'Owner', text: 'Bravo' }),
+        timestamp: now(),
+        isMention: true,
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const created = getDb().prepare('SELECT id FROM agent_groups WHERE name = ?').get('Bravo') as
+      | { id: string }
+      | undefined;
+    expect(created).toBeDefined();
+    const mg = getMessagingGroupByPlatform('telegram', 'chat-new-agent');
+    expect(
+      getDb()
+        .prepare('SELECT id FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?')
+        .get(mg!.id, created!.id),
+    ).toBeDefined();
   });
 
   it('approve on a thread-less group (LINE-style, isGroup=true, threadId=null) wires "mention", not "pattern"', async () => {

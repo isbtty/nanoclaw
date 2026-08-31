@@ -28,6 +28,7 @@ import {
 } from './db/messaging-groups.js';
 import { findSessionForAgent } from './db/sessions.js';
 import { handleKnowledgeScopeCommand } from './modules/permissions/knowledge-scope-command.js';
+import { stampSenderToken } from './deshi/sender-token.js';
 import { startTypingRefresh, stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import {
@@ -531,6 +532,17 @@ async function deliverToAgent(
       }
     }
   }
+
+  // Stamp the sender token (.deshi/adr/0020-sender-token.md). The container
+  // quotes it back on `ncl` / host-tool calls so the host can resolve who asked
+  // without trusting container-supplied identity. No-op when the sender is
+  // unknown — the verifying side is fail-closed.
+  content = stampSenderToken(content, {
+    userId,
+    messagingGroupId: mg.id,
+    agentGroupId: agent.agent_group_id,
+    sessionId: session.id,
+  });
 
   writeSessionMessage(session.agent_group_id, session.id, {
     id: messageIdForAgent(event.message.id, agent.agent_group_id),

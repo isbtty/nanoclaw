@@ -16,7 +16,11 @@ upstream の変更そのものは upstream の CHANGELOG / release notes を参�
 
 ### Added
 
+- `/boswell-add-slack-permission-split` — `/add-slack` のオプションとして、管理者BOT と知識検索BOT の 2 本立てを配線する初回セットアップ。当初 `/boswell-setup-permission-split` で起票したが、add-slack の派生である位置づけを名前に出すため改名した (ADR-0016 の許可動詞 `add` を使用)。
+- 知識検索BOT を boswell の検索 API 直結へ変更。検索と本文取得を分離し、公開範囲の判定を boswell に残したまま回答生成を container 側へ移した。
 - ADR-0019: deshi 所有テーブルの作り方 (`deshi_` prefix + `CREATE TABLE IF NOT EXISTS`) と、`ensureUserDm` への直接侵襲を ADR-0002 の明示的例外として記録。
+- ADR-0020: sender token — container が「誰の依頼か」を偽れないよう、host が inbound の各メッセージに短命トークンを打刻し、`ncl` / host-tool 呼び出しの主体を host 側で解決する。
+- ADR-0021: BOT 権限分離 — 知識検索BOT と管理者BOT を Slack App レベルで物理分離し、チャンネル登録の承認に配線を相乗りさせる。当初 0019 で起票したが、`deshi_` 所有テーブルの ADR-0019 と番号が衝突したため 0021 に採番し直した。
 
 - 初期セットアップ — `.deshi/` メタディレクトリ (`upstream-versions.json` / `skills-catalog.json` / `adr/` / `docs/` / `scripts/`) を導入。
 - `src/deshi/` namespace 雛形 (`channels/` / `providers/` の空 barrel)。

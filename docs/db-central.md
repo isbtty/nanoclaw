@@ -344,6 +344,7 @@ Migrations live in `src/db/migrations/`, one file per migration. Runner: `runMig
 | 009 | `009-drop-pending-credentials.ts` | Drop the defunct `pending_credentials` table |
 | 014 | `014-container-configs.ts` | `container_configs` — per-agent-group container runtime config |
 | 015 | `015-cli-scope.ts` | `ALTER TABLE container_configs ADD COLUMN cli_scope` |
+| 020 | `020-sender-tokens.ts` | `sender_tokens` — host が inbound ごとに刻むトークン。後から来る CLI 要求を実在の発言者に紐づけるために使う (`.deshi/adr/0020-sender-token.md`) |
 
 Numbers 005 and 006 are intentionally absent — migrations were renumbered during early development.
 
