@@ -22,6 +22,7 @@ import {
   type OutboundMessage,
 } from './db/session-db.js';
 import { log } from './log.js';
+import { isCorruptionError, noteOutboundCorruption, noteOutboundReadOk } from './outbound-corruption.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
@@ -192,7 +193,13 @@ async function pollActive(): Promise<void> {
   try {
     const sessions = getRunningSessions();
     for (const session of sessions) {
-      await deliverSessionMessages(session);
+      // Per-session catch: one broken session (e.g. a corrupt outbound.db)
+      // must not starve delivery for every session after it in the list.
+      try {
+        await deliverSessionMessages(session);
+      } catch (err) {
+        log.error('Active delivery poll error for session', { sessionId: session.id, err });
+      }
     }
   } catch (err) {
     log.error('Active delivery poll error', { err });
@@ -207,7 +214,11 @@ async function pollSweep(): Promise<void> {
   try {
     const sessions = getActiveSessions();
     for (const session of sessions) {
-      await deliverSessionMessages(session);
+      try {
+        await deliverSessionMessages(session);
+      } catch (err) {
+        log.error('Sweep delivery poll error for session', { sessionId: session.id, err });
+      }
     }
   } catch (err) {
     log.error('Sweep delivery poll error', { err });
@@ -237,14 +248,35 @@ async function drainSession(session: Session): Promise<void> {
   let inDb: Database.Database;
   try {
     outDb = openOutboundDb(agentGroup.id, session.id);
+  } catch (err) {
+    // Usually the DB doesn't exist yet — but SQLITE_NOTADB here means a
+    // torn header, which the self-heal must see.
+    if (isCorruptionError(err)) noteOutboundCorruption(session, err);
+    return;
+  }
+  try {
     inDb = openInboundDb(agentGroup.id, session.id);
   } catch {
+    outDb.close();
     return; // DBs might not exist yet
   }
 
   try {
     // Read all due messages from outbound.db (read-only)
-    const allDue = getDueOutboundMessages(outDb);
+    let allDue: OutboundMessage[];
+    try {
+      allDue = getDueOutboundMessages(outDb);
+    } catch (err) {
+      // Persistent corruption here (container hard-killed mid-write) would
+      // otherwise fail every poll forever — route it to the quarantine
+      // streak counter instead of rethrowing.
+      if (isCorruptionError(err)) {
+        noteOutboundCorruption(session, err);
+        return;
+      }
+      throw err;
+    }
+    noteOutboundReadOk(session.id);
     if (allDue.length === 0) return;
 
     // Filter out already-delivered messages using inbound.db's delivered table
