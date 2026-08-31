@@ -44,6 +44,7 @@ import {
   type ContainerState,
 } from './db/session-db.js';
 import { log } from './log.js';
+import { isCorruptionError, noteOutboundCorruption } from './outbound-corruption.js';
 import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
 import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import type { Session } from './types.js';
@@ -146,7 +147,19 @@ async function sweep(): Promise<void> {
   try {
     const sessions = getActiveSessions();
     for (const session of sessions) {
-      await sweepSession(session);
+      // Per-session catch: one broken session must not abort the sweep for
+      // every session after it. A corrupt outbound.db read feeds the
+      // quarantine streak (delivery.ts feeds it too; the counter dedupes
+      // by session and quick_check guards against misattribution).
+      try {
+        await sweepSession(session);
+      } catch (err) {
+        if (isCorruptionError(err)) {
+          noteOutboundCorruption(session, err);
+        } else {
+          log.error('Host sweep error for session', { sessionId: session.id, err });
+        }
+      }
     }
   } catch (err) {
     log.error('Host sweep error', { err });
