@@ -46,6 +46,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { shouldDedupeRunStart, armRunStartGuard, type LastRunStart } from './run-start-guard.js';
 import { loadInflightJob, saveInflightJob, clearInflightJob } from './inflight-job-store.js';
+import { readMaxUserMessageSeq } from './user-message-marker.js';
 import { hostFetch } from './host-fetch.js';
 
 const DESHI_HOST_URL = process.env.DESHI_HOST_URL || 'http://host.docker.internal:5180';
@@ -185,14 +186,18 @@ function readSessionRouting(): ChannelContext {
 //   別の deshi job (別 threadId) が生まれて多重発火する (input が膨らみながら
 //   何本も走る)。失敗/未完を「もう一回」と誤解した自発再委譲が主因。
 //
-//   nanoclaw だけが「前回 run_start 以降に新しい wake 発話が来たか」を判定できる
+//   nanoclaw だけが「前回 run_start 以降に新しいユーザー発話が来たか」を判定できる
 //   (deshi daemon は run 呼び出ししか見えず、引き金のユーザー発話を見られない)。
 //   そこで shim 側で構造的に抑止する:
-//     - messages_in.trigger=1 (= agent を起こした発話) の MAX(seq) を marker とする。
+//     - messages_in のユーザー発話 (kind IN ('chat','chat-sdk')) の MAX(seq) を
+//       marker とする。かつては trigger=1 (= 起床発話) 限定だったが、グループ
+//       チャットの @メンション無し発話は trigger=0 のため marker が進まず、
+//       正当な追撃依頼まで恒久 dedupe される事故があった (user-message-marker.ts
+//       のヘッダ参照)。webhook (skill 実行結果) / task / system は数えない。
 //     - 直前の run_start 時の marker と同じ = 新しいユーザー発話が無い → 2 本目の
 //       run_start を deshi に転送せず、直前の job を返して「それを poll しろ」と誘導。
 //       deshi 側に新 job を作らせない。
-//     - 新しい wake 発話が来て marker が進めば、正当な新規依頼として通す。
+//     - 新しいユーザー発話が来て marker が進めば、正当な新規依頼として通す。
 //   これにより「ユーザーが明示的に再依頼したケース」(marker 前進) は誤抑止しない。
 //
 //   状態は module-level (= この session の container 内で持続)。container は 1
@@ -211,18 +216,17 @@ if (lastRunStart) {
 }
 
 /**
- * agent を起こした発話 (messages_in.trigger=1) の MAX(seq) を返す。新しいユーザー
- * 発話が来たかどうかの marker。読めない場合は -1 (ガードを無効化し転送を許す)。
+ * ユーザー発話 (messages_in.kind IN ('chat','chat-sdk')) の MAX(seq) を返す。
+ * 新しいユーザー発話が来たかどうかの marker。trigger 値は見ない (グループの
+ * @メンション無し発話は trigger=0 だが正当な新規依頼)。読めない場合は
+ * 呼び出し側が -1 に落とす (ガードを無効化し転送を許す)。
  */
 function readMaxTriggerSeq(): number {
   const db = new Database(INBOUND_DB_PATH, { readonly: true });
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA mmap_size = 0');
   try {
-    const row = db.prepare('SELECT MAX(seq) AS m FROM messages_in WHERE trigger = 1').get() as
-      | { m: number | null }
-      | undefined;
-    return row?.m ?? 0;
+    return readMaxUserMessageSeq(db);
   } finally {
     db.close();
   }
@@ -270,7 +274,7 @@ server.tool(
     }
     const deduped = shouldDedupeRunStart(lastRunStart, triggerSeq);
     if (deduped) {
-      log(`run_start deduped: no new wake message since job ${deduped.jobId} (triggerSeq=${triggerSeq})`);
+      log(`run_start deduped: no new user message since job ${deduped.jobId} (markerSeq=${triggerSeq})`);
       return {
         content: [
           {
