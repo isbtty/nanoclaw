@@ -26,6 +26,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { loadConfig } from './config.js';
+import { DEFAULT_OUTBOUND_PATH } from './db/connection.js';
+import { corruptionExitCode } from './db/corruption.js';
 import { buildSystemPromptAddendum } from './destinations.js';
 import { ensureMemoryScaffold } from './memory-scaffold.js';
 // Providers barrel — each enabled provider self-registers on import.
@@ -112,5 +114,14 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   log(`Fatal error: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
+  // A corrupt session DB gets a dedicated exit code so the host can tell the
+  // two files apart and recover outbound.db before respawning — a plain
+  // exit 1 here is what made the 2026-11 takbot-group outages loop for
+  // hours (spawn → malformed → exit 1 → spawn …). See db/corruption.ts.
+  const code = corruptionExitCode(err, DEFAULT_OUTBOUND_PATH);
+  if (code !== null) {
+    log(`Session DB corruption — exiting ${code} so the host ${code === 76 ? 'recovers outbound.db' : 'remounts'}`);
+  }
+  // Defer one tick so the log lines flush through Docker's log driver.
+  setTimeout(() => process.exit(code ?? 1), 100);
 });

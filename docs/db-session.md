@@ -177,6 +177,23 @@ CREATE TABLE session_state (
 
 Access: `container/agent-runner/src/db/session-state.ts`.
 
+### 4.4 `container_state`
+
+Single-row (id = 1) record of the tool currently in flight, so the host sweep
+can widen its stuck tolerance for a long-running Bash call. Writer:
+`setContainerToolInFlight()` / `clearContainerToolInFlight()` in
+`container/agent-runner/src/db/connection.ts`; reader: `getContainerState()`
+in `src/db/session-db.ts`.
+
+### 4.5 Corruption handling
+
+A torn `outbound.db` is detected by the container (exit code **76**, or **75**
+for a poisoned `inbound.db` view) and by the host's own read errors, and
+recovered data-first (`sqlite3 .recover` → row copy → empty schema) with the
+original kept as `outbound.db.corrupt-<stamp>.bak`. Sessions whose container
+keeps dying at boot are held by a per-session spawn backoff. Full writeup:
+[outbound-db-corruption.md](outbound-db-corruption.md).
+
 ---
 
 ## 5. Schema evolution

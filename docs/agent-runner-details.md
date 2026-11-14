@@ -718,6 +718,8 @@ The agent-runner receives configuration via:
 
 The agent-runner reads config, creates the provider, and enters the poll loop. No stdin, no initial prompt — messages are already in the session DB.
 
+**Exit codes** (`container/agent-runner/src/db/corruption.ts`): `1` any fatal error; `75` the `inbound.db` read view is poisoned (cross-mount page cache) — a fresh mount fixes it; `76` this container's own `outbound.db` fails `quick_check` — the host must recover the file before respawning. The host's close handler dispatches on these; see [outbound-db-corruption.md](outbound-db-corruption.md).
+
 ### Provider Factory
 
 ```typescript

@@ -46,6 +46,7 @@ import {
 import { log } from './log.js';
 import { isCorruptionError, noteOutboundCorruption } from './outbound-corruption.js';
 import { openInboundDb, openOutboundDb, openOutboundDbRw, inboundDbPath, heartbeatPath } from './session-manager.js';
+import { spawnBackoff } from './session-spawn-backoff.js';
 import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
 import type { Session } from './types.js';
 
@@ -216,11 +217,28 @@ async function sweepSession(session: Session): Promise<void> {
     const dueCount = countDueMessages(inDb);
     let justWoke = false;
     if (dueCount > 0 && !isContainerRunning(session.id)) {
-      log.info('Waking container for due messages', { sessionId: session.id, count: dueCount });
-      // wakeContainer never throws — transient spawn failures (OneCLI down,
-      // etc.) return false and leave messages pending for the next tick.
-      await wakeContainer(session);
-      justWoke = true;
+      // Early-exit backoff: a session whose container keeps dying within
+      // seconds of spawn is held instead of respawned every tick. One error
+      // line per tick while held — that repetition is the operator's signal
+      // (see session-spawn-backoff.ts; container-runner also DMs an admin
+      // when the hold escalates).
+      const hold = spawnBackoff.check(session.id, Date.now());
+      if (hold.blocked) {
+        log.error('Session held by early-exit backoff — not waking despite due messages', {
+          sessionId: session.id,
+          dueCount,
+          consecutiveFailures: hold.failures,
+          lastExitCode: hold.lastExitCode,
+          resumeAt: new Date(hold.until).toISOString(),
+          lastStderrTail: hold.lastStderrTail,
+        });
+      } else {
+        log.info('Waking container for due messages', { sessionId: session.id, count: dueCount });
+        // wakeContainer never throws — transient spawn failures (OneCLI down,
+        // etc.) return false and leave messages pending for the next tick.
+        await wakeContainer(session);
+        justWoke = true;
+      }
     }
 
     const alive = isContainerRunning(session.id);

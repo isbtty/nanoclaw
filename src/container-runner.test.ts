@@ -95,3 +95,35 @@ describe('container boot-failure tripwire (structural)', () => {
     expect(src).toMatch(/Container exited non-zero.*stderrTail/s);
   });
 });
+
+describe('outbound corruption exit → recovery path (structural)', () => {
+  // The agent-runner exits 76 when its own outbound.db is corrupt
+  // (container/agent-runner/src/db/corruption.ts). The host's close handler
+  // must route that — and the older image's plain "malformed" stderr — into
+  // outbound-corruption.ts, or the session loops spawn→die forever. Driving a
+  // real spawn needs Docker; guard the wiring structurally like the tests
+  // above, and exercise the handler itself behaviourally below.
+  it('close handler hands every exit to handleContainerExit, which dispatches on code 76 / stderr', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toMatch(
+      /container\.on\('close'[\s\S]*?handleContainerExit\(session, \{ code, startedAt, stderrTail \}\)/,
+    );
+    expect(src).toMatch(
+      /code === OUTBOUND_CORRUPTION_EXIT_CODE \|\| \(code !== 0 && code !== null && stderrMentionsCorruption\(stderrTail\)\)/,
+    );
+    expect(src).toMatch(/handleContainerCorruptionExit\(session, \{ code, stderrTail \}\)/);
+    expect(src).toMatch(/spawnBackoff\.recordExit\(session\.id/);
+    expect(src).toMatch(/spawnBackoff\.check\(session\.id, Date\.now\(\)\)[\s\S]*?return Promise\.resolve\(false\)/);
+  });
+
+  it('the exit code constant matches the agent-runner side', () => {
+    const host = fs.readFileSync(path.join(process.cwd(), 'src', 'outbound-corruption.ts'), 'utf-8');
+    const runner = fs.readFileSync(
+      path.join(process.cwd(), 'container', 'agent-runner', 'src', 'db', 'corruption.ts'),
+      'utf-8',
+    );
+    expect(host).toContain('export const OUTBOUND_CORRUPTION_EXIT_CODE = 76;');
+    expect(runner).toContain('export const OUTBOUND_CORRUPTION_EXIT_CODE = 76;');
+    expect(runner).toContain('export const INBOUND_CORRUPTION_EXIT_CODE = 75;');
+  });
+});

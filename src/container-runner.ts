@@ -35,6 +35,12 @@ import { initGroupFilesystem } from './group-init.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
+import {
+  handleContainerCorruptionExit,
+  OUTBOUND_CORRUPTION_EXIT_CODE,
+  stderrMentionsCorruption,
+} from './outbound-corruption.js';
+import { spawnBackoff } from './session-spawn-backoff.js';
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
 import './providers/index.js';
@@ -56,7 +62,7 @@ import type { AgentGroup, Session } from './types.js';
 const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
 /** Active containers tracked by session ID. */
-const activeContainers = new Map<string, { process: ChildProcess; containerName: string }>();
+const activeContainers = new Map<string, { process: ChildProcess; containerName: string; startedAt: number }>();
 
 /**
  * In-flight wake promises, keyed by session id. Deduplicates concurrent
@@ -97,6 +103,19 @@ export function wakeContainer(session: Session): Promise<boolean> {
   if (existing) {
     log.debug('Container wake already in-flight — joining existing promise', { sessionId: session.id });
     return existing;
+  }
+  // Per-session crash-loop guard: a container that keeps dying within
+  // seconds of spawn is held back on an exponential schedule instead of
+  // being respawned on every sweep tick. host-sweep logs the hold with the
+  // last stderr tail; here we just decline. See session-spawn-backoff.ts.
+  const hold = spawnBackoff.check(session.id, Date.now());
+  if (hold.blocked) {
+    log.warn('Container spawn held by early-exit backoff', {
+      sessionId: session.id,
+      failures: hold.failures,
+      resumeAt: new Date(hold.until).toISOString(),
+    });
+    return Promise.resolve(false);
   }
   const promise = spawnContainer(session)
     .then(() => true)
@@ -170,7 +189,8 @@ async function spawnContainer(session: Session): Promise<void> {
 
   const container = spawn(CONTAINER_RUNTIME_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  activeContainers.set(session.id, { process: container, containerName });
+  const startedAt = Date.now();
+  activeContainers.set(session.id, { process: container, containerName, startedAt });
   markContainerRunning(session.id);
 
   // Log stderr. A container that dies at boot (unknown provider, missing
@@ -204,6 +224,7 @@ async function spawnContainer(session: Session): Promise<void> {
     } else {
       log.info('Container exited', { sessionId: session.id, code, containerName });
     }
+    handleContainerExit(session, { code, startedAt, stderrTail });
   });
 
   container.on('error', (err) => {
@@ -212,6 +233,59 @@ async function spawnContainer(session: Session): Promise<void> {
     stopTypingRefresh(session.id);
     log.error('Container spawn error', { sessionId: session.id, err });
   });
+}
+
+/**
+ * Post-exit bookkeeping shared by every container death:
+ *
+ *   1. Early-exit backoff — a non-zero exit within 30s of spawn is a strike;
+ *      the schedule in session-spawn-backoff.ts decides how long the next
+ *      wake is held. On each escalation log at error with the stderr tail
+ *      (that line is the operator's signal) and DM an admin, best-effort.
+ *   2. Outbound corruption — exit 76 (agent-runner's "my outbound.db is
+ *      corrupt", container/agent-runner/src/db/corruption.ts) or, for images
+ *      predating that code, a non-zero exit whose stderr says "malformed".
+ *      Hands off to outbound-corruption.ts, which quick_checks the file and
+ *      recovers it (keeping the original as .bak) before anything respawns.
+ *      That path resets the backoff when it succeeds.
+ *
+ * Exported for tests; production calls it only from the close handler.
+ */
+export function handleContainerExit(
+  session: Session,
+  info: { code: number | null; startedAt: number; stderrTail: string[] },
+): void {
+  const { code, startedAt, stderrTail } = info;
+  const outcome = spawnBackoff.recordExit(session.id, { code, startedAt, now: Date.now(), stderrTail });
+  if (outcome.earlyFailure && outcome.escalated) {
+    log.error('Container keeps dying right after spawn — early-exit backoff engaged', {
+      sessionId: session.id,
+      consecutiveFailures: outcome.failures,
+      lastExitCode: code,
+      holdSec: Math.round(outcome.delayMs / 1000),
+      stderrTail,
+    });
+    // Dynamic import: the alert rides the approvals module, which imports
+    // this file for wakeContainer. Fire-and-forget; never throws.
+    void import('./session-crash-alert.js')
+      .then((m) =>
+        m.alertSessionCrashLoop(session, {
+          failures: outcome.failures,
+          delayMs: outcome.delayMs,
+          lastExitCode: code,
+          stderrTail,
+        }),
+      )
+      .catch((err) => log.warn('Crash-loop alert module failed', { sessionId: session.id, err }));
+  }
+
+  if (code === OUTBOUND_CORRUPTION_EXIT_CODE || (code !== 0 && code !== null && stderrMentionsCorruption(stderrTail))) {
+    try {
+      handleContainerCorruptionExit(session, { code, stderrTail });
+    } catch (err) {
+      log.error('Outbound corruption exit handling failed', { sessionId: session.id, code, err });
+    }
+  }
 }
 
 /** Kill a container for a session. */

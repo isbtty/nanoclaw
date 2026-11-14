@@ -1,33 +1,48 @@
 /**
  * Host-side self-heal for corrupt outbound.db files.
  *
- * A container hard-killed mid-write (heartbeat ceiling, crash) can tear the
- * session's outbound.db — journal_mode=DELETE plus the Docker Desktop macOS
- * virtiofs coherency quirk (see container/agent-runner PR #2597) leaves the
- * file unreadable ("database disk image is malformed"). The host cannot
- * repair the file, and without intervention every delivery poll fails
- * forever while the user sees their agent go silent.
+ * A container hard-killed mid-write (heartbeat ceiling, crash) — or, as the
+ * 2026-11-07 incident showed, plain writes through the Docker Desktop
+ * virtiofs bind mount — can tear the session's outbound.db ("database disk
+ * image is malformed"). Without intervention every spawn dies at boot while
+ * the user sees their agent go silent (isbtty/boswell#846).
  *
- * Mirror of the container-side inbound.db streak-exit fix, but on the host:
- * after QUARANTINE_STREAK consecutive corruption errors on the same session,
- * verify the corruption on a fresh connection (quick_check), kill the
- * session's container (it holds the old inode via the bind mount), rename
- * the corrupt file to outbound.db.corrupt-<stamp>.bak, recreate a fresh DB
- * from schema, and respawn the container if inbound work is pending.
+ * Two entry points feed the same recovery:
  *
- * Undelivered rows in the corrupt file stay in the .bak for manual salvage —
- * quarantine never deletes data.
+ *   noteOutboundCorruption — host-side *read* errors (delivery / sweep).
+ *     After QUARANTINE_STREAK consecutive errors on one session, verify on a
+ *     fresh connection (quick_check) and recover.
+ *
+ *   handleContainerCorruptionExit — the container exited with
+ *     OUTBOUND_CORRUPTION_EXIT_CODE (76), or died non-zero with a corruption
+ *     message in its stderr tail (older image). Freelist-page damage leaves
+ *     the host's messages_out reads working while only the container's
+ *     writes fail, so the read-streak path never fires — this one does. No
+ *     streak: the container already paid for the diagnosis; quick_check
+ *     still guards against acting on a stale in-container view.
+ *
+ * Recovery (src/outbound-recovery.ts) is data-preserving: `sqlite3 .recover`
+ * → row copy → empty schema, in that order, and the original is always kept
+ * as outbound.db.corrupt-<stamp>.bak. The session's spawn backoff is reset
+ * afterwards and the container respawned if inbound work is pending.
  */
 import fs from 'fs';
 
 import Database from 'better-sqlite3';
 
 import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
-import { countDueMessages, ensureSchema } from './db/session-db.js';
+import { countDueMessages } from './db/session-db.js';
 import { getSession } from './db/sessions.js';
 import { log } from './log.js';
+import { recoverOutboundDb } from './outbound-recovery.js';
 import { openInboundDb, outboundDbPath } from './session-manager.js';
+import { spawnBackoff } from './session-spawn-backoff.js';
 import type { Session } from './types.js';
+
+/** Exit code the agent-runner uses for "my outbound.db is corrupt" — see
+ *  container/agent-runner/src/db/corruption.ts. Mirrored, not imported: the
+ *  two trees share no modules. */
+export const OUTBOUND_CORRUPTION_EXIT_CODE = 76;
 
 /** Consecutive corruption errors on one session before quarantine fires.
  *  Active sessions poll at 1s (threshold in ~3s); sweep-only at 60s (~3min). */
@@ -110,28 +125,64 @@ function quickCheckOk(dbPath: string): boolean {
   }
 }
 
+/**
+ * Container reported a corrupt outbound.db by exit code / stderr. Runs from
+ * the container's close handler, so the file has no writer any more.
+ */
+export function handleContainerCorruptionExit(
+  session: Session,
+  info: { code: number | null; stderrTail?: string[] },
+): void {
+  if (quarantineInProgress.has(session.id)) return;
+  const dbPath = outboundDbPath(session.agent_group_id, session.id);
+  if (!fs.existsSync(dbPath)) return;
+
+  if (quickCheckOk(dbPath)) {
+    // The container's view was poisoned but the file is fine (the inbound.db
+    // page-cache failure mode, or exit 75 whose stderr also says malformed).
+    // A respawn with a fresh mount is the fix; spawn backoff throttles it
+    // if it keeps happening.
+    log.warn('Container reported outbound corruption but file passes quick_check — not recovering', {
+      sessionId: session.id,
+      code: info.code,
+    });
+    return;
+  }
+
+  quarantineInProgress.add(session.id);
+  log.error('Outbound DB corruption confirmed by container exit — recovering', {
+    sessionId: session.id,
+    code: info.code,
+    stderrTail: info.stderrTail,
+  });
+  if (isContainerRunning(session.id)) {
+    killContainer(session.id, 'outbound.db corrupt — recovering', () => quarantineOutboundDb(session));
+  } else {
+    quarantineOutboundDb(session);
+  }
+}
+
+/** True when a container's stderr tail carries a SQLite corruption message
+ *  (message text or result-code name — bun:sqlite prints either). */
+const CORRUPTION_STDERR_RE = /database disk image is malformed|file is not a database|SQLITE_CORRUPT|SQLITE_NOTADB/;
+export function stderrMentionsCorruption(stderrTail: string[] | undefined): boolean {
+  return (stderrTail ?? []).some((line) => CORRUPTION_STDERR_RE.test(line));
+}
+
 function quarantineOutboundDb(session: Session): void {
   const dbPath = outboundDbPath(session.agent_group_id, session.id);
   try {
-    const d = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(
-      d.getMinutes(),
-    )}${pad(d.getSeconds())}`;
-    const bakPath = `${dbPath}.corrupt-${stamp}.bak`;
-
-    fs.renameSync(dbPath, bakPath);
-    // A stray rollback journal would be replayed into the *fresh* DB on next
-    // open — move it alongside the file it belongs to.
-    for (const suffix of ['-journal', '-wal', '-shm']) {
-      if (fs.existsSync(`${dbPath}${suffix}`)) fs.renameSync(`${dbPath}${suffix}`, `${bakPath}${suffix}`);
-    }
-    ensureSchema(dbPath, 'outbound');
-    log.warn('Quarantined corrupt outbound DB — fresh DB created; undelivered rows remain in the backup', {
+    const result = recoverOutboundDb(dbPath);
+    log.warn('Recovered corrupt outbound DB — original kept as backup', {
       sessionId: session.id,
-      backup: bakPath,
+      method: result.method,
+      backup: result.backupPath,
+      sessionStateRows: result.tables.session_state?.recovered ?? 0,
+      messagesOutRows: result.tables.messages_out?.recovered ?? 0,
     });
 
+    // The crash loop (if any) was the corrupt file; let the respawn through.
+    spawnBackoff.reset(session.id);
     respawnIfWorkPending(session);
   } catch (err) {
     // Rename/recreate failed (permissions, disk). Leave the streak cleared so
