@@ -10,6 +10,8 @@ import { getContainerConfig } from '../db/container-configs.js';
 import { getAgentGroup } from '../db/agent-groups.js';
 import { getSession } from '../db/sessions.js';
 import { registerApprovalHandler, requestApproval } from '../modules/approvals/index.js';
+import { allowsResourceUnderGroupScope, decideAgentRequest } from '../deshi/permission-gate.js';
+import { log } from '../log.js';
 import type { CallerContext, ErrorCode, RequestFrame, ResponseFrame } from './frame.js';
 import { getResource } from './crud.js';
 import { lookup } from './registry.js';
@@ -64,7 +66,9 @@ export async function dispatch(
     if (cliScope === 'group') {
       const allowed = new Set(['groups', 'sessions', 'destinations', 'members']);
       // Only allow whitelisted resources and general commands (no resource, like help)
-      if (cmd.resource && !allowed.has(cmd.resource)) {
+      // 権限分離モードの agent group だけ、この allowlist が `roles` まで広がる
+      // (.deshi/adr/0021 §3)。それ以外は下の判定がそのまま効く。
+      if (cmd.resource && !allowed.has(cmd.resource) && !allowsResourceUnderGroupScope(ctx.agentGroupId, req.command)) {
         return err(req.id, 'forbidden', `CLI access is scoped to this agent group. Cannot access "${cmd.resource}".`);
       }
 
@@ -115,28 +119,64 @@ export async function dispatch(
     }
   }
 
-  if (ctx.caller !== 'host' && cmd.access === 'approval' && !opts.approved) {
-    const session = getSession(ctx.sessionId);
-    if (!session) {
-      return err(req.id, 'handler-error', 'Session not found.');
-    }
-    const agentGroup = getAgentGroup(ctx.agentGroupId);
-    const agentName = agentGroup?.name ?? ctx.agentGroupId;
-
-    const argSummary = Object.entries(req.args)
-      .map(([k, v]) => `--${k} ${v}`)
-      .join(' ');
-
-    await requestApproval({
-      session,
-      agentName,
-      action: 'cli_command',
-      payload: { frame: { id: req.id, command: req.command, args: req.args }, callerContext: ctx },
-      title: `CLI: ${req.command}`,
-      question: `Agent "${agentName}" wants to run:\n\`ncl ${req.command}${argSummary ? ' ' + argSummary : ''}\``,
+  if (ctx.caller !== 'host' && cmd.access === 'approval') {
+    // 権限分離モードでは、権限操作は依頼した本人が admin なら即時実行する
+    // (.deshi/adr/0021 §6)。それ以外は 'defer' が返り、下の承認カード経路に落ちる。
+    //
+    // opts.approved (承認カードからの replay) でも通すのは、操作対象の制約を
+    // 効かせるため。承認を挟んでも、チャットから global 権限を触らせない。
+    const decision = decideAgentRequest({
+      agentGroupId: ctx.agentGroupId,
+      sessionId: ctx.sessionId,
+      resource: cmd.resource,
+      args: req.args,
+      approved: opts.approved === true,
     });
+    if (decision.action === 'deny') {
+      return err(req.id, 'forbidden', decision.message);
+    }
+    if (decision.action === 'allow') {
+      log.info('CLI command auto-approved — requester holds admin', {
+        requestId: req.id,
+        command: req.command,
+        userId: decision.userId,
+        agentGroupId: ctx.agentGroupId,
+      });
+      // 誰の指示で付与・剥奪したかを DB 側にも残す (人の承認という監査点が
+      // 無くなるため)。agent の申告値ではなく host が確定した依頼者を使うので、
+      // 同じ意味のハイフン別名 (`--granted-by`) ごと落としてから被せる。
+      // 別名を残すと後段の normalizeArgs が agent 申告値で上書きしてしまう。
+      const sanitized = { ...req.args };
+      for (const key of Object.keys(decision.argOverrides)) {
+        delete sanitized[key];
+        delete sanitized[key.replace(/_/g, '-')];
+      }
+      req = { ...req, args: { ...sanitized, ...decision.argOverrides } };
+    }
+    // 承認済みの replay はここで再度カードを出さない (無限ループになる)。
+    if (decision.action === 'defer' && !opts.approved) {
+      const session = getSession(ctx.sessionId);
+      if (!session) {
+        return err(req.id, 'handler-error', 'Session not found.');
+      }
+      const agentGroup = getAgentGroup(ctx.agentGroupId);
+      const agentName = agentGroup?.name ?? ctx.agentGroupId;
 
-    return err(req.id, 'approval-pending', 'Approval request sent to admin. You will be notified of the result.');
+      const argSummary = Object.entries(req.args)
+        .map(([k, v]) => `--${k} ${v}`)
+        .join(' ');
+
+      await requestApproval({
+        session,
+        agentName,
+        action: 'cli_command',
+        payload: { frame: { id: req.id, command: req.command, args: req.args }, callerContext: ctx },
+        title: `CLI: ${req.command}`,
+        question: `Agent "${agentName}" wants to run:\n\`ncl ${req.command}${argSummary ? ' ' + argSummary : ''}\``,
+      });
+
+      return err(req.id, 'approval-pending', 'Approval request sent to admin. You will be notified of the result.');
+    }
   }
 
   let parsed: unknown;
