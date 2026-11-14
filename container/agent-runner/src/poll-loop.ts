@@ -4,7 +4,13 @@ import path from 'path';
 import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
 import { getPendingMessages, markProcessing, markCompleted, type MessageInRow } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
-import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
+import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks, DEFAULT_OUTBOUND_PATH } from './db/connection.js';
+import {
+  isCorruptionError as isCorruptionErrorValue,
+  outboundFileIsCorrupt,
+  INBOUND_CORRUPTION_EXIT_CODE,
+  OUTBOUND_CORRUPTION_EXIT_CODE,
+} from './db/corruption.js';
 import {
   clearContinuation,
   clearCurrentInReplyTo,
@@ -43,13 +49,12 @@ const CORRUPTION_STREAK_EXIT = 10;
  * actual file damage (host-side integrity_check passes). Reopening the DB
  * handle inside this process does NOT recover; only a fresh container mount
  * does. Caller's job is to exit so host-sweep respawns the container.
+ *
+ * Kept as a re-export for existing callers/tests; the matcher now lives in
+ * db/corruption.ts alongside the exit codes.
  */
 export function isCorruptionError(msg: string): boolean {
-  return (
-    msg.includes('database disk image is malformed') ||
-    msg.includes('SQLITE_CORRUPT') ||
-    msg.includes('file is not a database')
-  );
+  return isCorruptionErrorValue(msg);
 }
 
 function log(msg: string): void {
@@ -551,6 +556,21 @@ export async function processQuery(
         // view. Reopening inside the container does NOT recover; only a fresh
         // container mount does. Exit so the host sweep respawns us.
         if (isCorruptionError(errMsg)) {
+          // The follow-up poll touches both files (messages_in read, then
+          // processing_ack / messages_out writes), so first check whether the
+          // file *we own* is the broken one. If outbound.db fails quick_check
+          // on a fresh connection no streak is needed — the container cannot
+          // fix its own file, only the host can (exit 76 → recovery path).
+          if (outboundFileIsCorrupt(DEFAULT_OUTBOUND_PATH)) {
+            log(
+              `Follow-up poll: '${errMsg}' and outbound.db fails quick_check — ` +
+                `exiting ${OUTBOUND_CORRUPTION_EXIT_CODE} so the host recovers the file before respawning.`,
+            );
+            done = true;
+            clearInterval(pollHandle);
+            setTimeout(() => process.exit(OUTBOUND_CORRUPTION_EXIT_CODE), 100);
+            return;
+          }
           corruptionStreak += 1;
           if (corruptionStreak >= CORRUPTION_STREAK_EXIT) {
             log(
@@ -563,7 +583,7 @@ export async function processQuery(
             clearInterval(pollHandle);
             // Defer exit one tick so this log line flushes through Docker's
             // log driver before the process dies.
-            setTimeout(() => process.exit(75), 100);
+            setTimeout(() => process.exit(INBOUND_CORRUPTION_EXIT_CODE), 100);
           }
         } else {
           corruptionStreak = 0;

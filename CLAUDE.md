@@ -248,6 +248,7 @@ Check these first when something goes wrong:
 | Host logs | `logs/nanoclaw.error.log` first (delivery failures, crash-loop backoff, warnings), then `logs/nanoclaw.log` for the full routing chain |
 | Setup logs | `logs/setup.log` (overall), `logs/setup-steps/*.log` (per-step: bootstrap, environment, container, onecli, mounts, service, etc.) |
 | Session DBs | `data/v2-sessions/<agent-group>/<session>/` — `inbound.db` (`messages_in`: did the message reach the container?), `outbound.db` (`messages_out`: did the agent produce a response?) |
+| `Fatal error: database disk image is malformed` repeating, or `early-exit backoff` lines | A session's `outbound.db` is corrupt or its container dies at boot. The host recovers the file itself (original kept as `outbound.db.corrupt-*.bak`) and throttles respawns — see [docs/outbound-db-corruption.md](docs/outbound-db-corruption.md) |
 
 Note: container logs are lost after the container exits (`--rm` flag). If the agent silently failed inside the container, there's no persistent log to inspect.
 
@@ -269,6 +270,7 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 | [docs/db.md](docs/db.md) | DB architecture overview: three-DB model, cross-mount rules, readers/writers map |
 | [docs/db-central.md](docs/db-central.md) | Central DB (`data/v2.db`) — every table + migration system |
 | [docs/db-session.md](docs/db-session.md) | Per-session `inbound.db` + `outbound.db` schemas + seq parity |
+| [docs/outbound-db-corruption.md](docs/outbound-db-corruption.md) | Corrupt `outbound.db`: container exit codes 75/76, `.recover`-first host recovery, per-session spawn backoff, bind-mount notes |
 | [docs/agent-runner-details.md](docs/agent-runner-details.md) | Agent-runner internals + MCP tool interface |
 | [docs/isolation-model.md](docs/isolation-model.md) | Three-level channel isolation model |
 | [docs/setup-wiring.md](docs/setup-wiring.md) | What's wired, what's open in the setup flow |

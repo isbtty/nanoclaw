@@ -20,8 +20,10 @@
 import { Database } from 'bun:sqlite';
 import fs from 'fs';
 
+import { isCorruptionError, OutboundCorruptionError } from './corruption.js';
+
 const DEFAULT_INBOUND_PATH = '/workspace/inbound.db';
-const DEFAULT_OUTBOUND_PATH = '/workspace/outbound.db';
+export const DEFAULT_OUTBOUND_PATH = '/workspace/outbound.db';
 const DEFAULT_HEARTBEAT_PATH = '/workspace/.heartbeat';
 
 let _inbound: Database | null = null;
@@ -75,45 +77,83 @@ export function getInboundDb(): Database {
   return _inbound;
 }
 
-/** Outbound DB — container owns this file (sole writer). */
-export function getOutboundDb(): Database {
+/**
+ * Outbound DB — container owns this file (sole writer). `path` is for tests
+ * only and applies to the first open.
+ *
+ * Opening/initializing runs `CREATE TABLE IF NOT EXISTS` and a schema read,
+ * which is where a physically corrupt outbound.db first surfaces
+ * ("database disk image is malformed"). That is rethrown as
+ * OutboundCorruptionError so index.ts exits with
+ * OUTBOUND_CORRUPTION_EXIT_CODE (76) and the host recovers the file instead
+ * of respawning into the same crash every minute (isbtty/boswell#846).
+ */
+export function getOutboundDb(path: string = DEFAULT_OUTBOUND_PATH): Database {
   if (!_outbound) {
-    _outbound = new Database(DEFAULT_OUTBOUND_PATH);
-    _outbound.exec('PRAGMA journal_mode = DELETE');
-    _outbound.exec('PRAGMA busy_timeout = 5000');
-    _outbound.exec('PRAGMA foreign_keys = ON');
-    // Lightweight forward-compat: session_state was added after the initial
-    // v2 schema, so older session DBs don't have it. Create it on demand
-    // instead of requiring a formal migration pass. Also handle the case
-    // where an earlier revision of this table existed without updated_at —
-    // ALTER TABLE to add any missing columns.
-    _outbound.exec(`
-      CREATE TABLE IF NOT EXISTS session_state (
-        key        TEXT PRIMARY KEY,
-        value      TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
-    const cols = new Set(
-      (_outbound.prepare("PRAGMA table_info('session_state')").all() as Array<{ name: string }>).map((c) => c.name),
-    );
-    if (!cols.has('updated_at')) {
-      _outbound.exec(`ALTER TABLE session_state ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
+    try {
+      _outbound = openAndInitOutbound(path);
+    } catch (err) {
+      _outbound = null;
+      if (isCorruptionError(err)) throw new OutboundCorruptionError('open/init', err);
+      throw err;
     }
-    // container_state: tracks the current tool in flight (if any) so the host
-    // sweep can widen its stuck tolerance when Bash is running with a user-
-    // declared long timeout. Forward-compat for older outbound.db files.
-    _outbound.exec(`
-      CREATE TABLE IF NOT EXISTS container_state (
-        id                       INTEGER PRIMARY KEY CHECK (id = 1),
-        current_tool             TEXT,
-        tool_declared_timeout_ms INTEGER,
-        tool_started_at          TEXT,
-        updated_at               TEXT NOT NULL
-      );
-    `);
   }
   return _outbound;
+}
+
+function openAndInitOutbound(path: string): Database {
+  const db = new Database(path);
+  try {
+    // busy_timeout first so the journal_mode read below waits out a sibling
+    // writer (the MCP server process shares this file) instead of failing.
+    db.exec('PRAGMA busy_timeout = 5000');
+    db.exec('PRAGMA journal_mode = DELETE');
+    // FULL is SQLite's compiled default for rollback-journal mode (verified
+    // under bun 1.3 and better-sqlite3), but pin it: the file lives on a VM
+    // bind mount (virtiofs) where a lost fsync is the leading suspect for the
+    // freelist corruption seen in production. A quieter default must never
+    // sneak in with a runtime upgrade. See docs/outbound-db-corruption.md.
+    db.exec('PRAGMA synchronous = FULL');
+    db.exec('PRAGMA foreign_keys = ON');
+    initOutboundSchema(db);
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+}
+
+function initOutboundSchema(db: Database): void {
+  // Lightweight forward-compat: session_state was added after the initial
+  // v2 schema, so older session DBs don't have it. Create it on demand
+  // instead of requiring a formal migration pass. Also handle the case
+  // where an earlier revision of this table existed without updated_at —
+  // ALTER TABLE to add any missing columns.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_state (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  const cols = new Set(
+    (db.prepare("PRAGMA table_info('session_state')").all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!cols.has('updated_at')) {
+    db.exec(`ALTER TABLE session_state ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
+  }
+  // container_state: tracks the current tool in flight (if any) so the host
+  // sweep can widen its stuck tolerance when Bash is running with a user-
+  // declared long timeout. Forward-compat for older outbound.db files.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS container_state (
+      id                       INTEGER PRIMARY KEY CHECK (id = 1),
+      current_tool             TEXT,
+      tool_declared_timeout_ms INTEGER,
+      tool_started_at          TEXT,
+      updated_at               TEXT NOT NULL
+    );
+  `);
 }
 
 /**
