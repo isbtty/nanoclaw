@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 
 import { configFromDb, type ContainerConfig } from './container-config.js';
 import { INSTALL_SLUG } from './config.js';
-import { buildMounts, composeSessionSpec, resolveProviderName, selectedSkillNames } from './container-runner.js';
+import { buildMounts, composeSessionSpec, resolveProviderName } from './container-runner.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { getSessionDriver } from './drivers/index.js';
@@ -135,8 +135,9 @@ async function verifyLocked(request: PreparedRequest): Promise<MountVerification
     throw failure(input.check, 2, 'capability_unavailable', 'Mount verification capability is unavailable.');
   }
 
-  const driver = getSessionDriver();
+  let driver: ReturnType<typeof getSessionDriver>;
   try {
+    driver = getSessionDriver();
     await driver.ensureReady?.();
   } catch {
     throw failure(input.check, 2, 'runtime_unavailable', 'The configured session runtime is unavailable.');
@@ -156,7 +157,12 @@ async function verifyLocked(request: PreparedRequest): Promise<MountVerification
     throw failure(input.check, 1, 'mount_not_ready', 'The selected mount is not configured and ready.');
   }
 
-  return runInProductionBoundary(readiness, request);
+  try {
+    return await runInProductionBoundary(readiness, request, driver);
+  } catch (err) {
+    if (err instanceof MountVerificationFailure) throw err;
+    throw failure(input.check, 2, 'runtime_unavailable', 'The verification runtime is unavailable.');
+  }
 }
 
 async function inspectMountReadiness(
@@ -171,12 +177,7 @@ async function inspectMountReadiness(
   const config = configFromDb(row, group);
   const provider = resolveProviderName(group.agent_provider, config.provider);
   if (!getProviderHostContract(provider)) {
-    throw failure(
-      check,
-      2,
-      'provider_projection_unavailable',
-      'The selected provider cannot be projected read-only.',
-    );
+    throw failure(check, 2, 'provider_projection_unavailable', 'The selected provider cannot be projected read-only.');
   }
 
   const configured = config.additionalMounts ?? [];
@@ -209,6 +210,7 @@ async function inspectMountReadiness(
 async function runInProductionBoundary(
   readiness: MountReadiness,
   request: PreparedRequest,
+  driver: ReturnType<typeof getSessionDriver>,
 ): Promise<MountVerificationResult> {
   const { config, group } = readiness;
   const { input } = request;
@@ -228,7 +230,6 @@ async function runInProductionBoundary(
   const contextDirectory = path.dirname(sessionContextPath(group.id, sessionId));
   const contextDirectoryExisted = fs.existsSync(contextDirectory);
   const mailbox = getAgentMailbox();
-  const driver = getSessionDriver();
   let handle: SessionHandle | undefined;
   try {
     assertRequestActive(request);
@@ -252,22 +253,11 @@ async function runInProductionBoundary(
     }
     const groupDir = path.resolve(process.cwd(), 'groups', group.folder);
     const sessionDirectory = sessionDir(group.id, sessionId);
-    const surfaces = await projectProviderSpawnSurfaces(contract, group.id, groupDir, sessionDirectory, async () =>
-      Promise.resolve(
-        providerFn?.({
-          sessionDir: sessionDirectory,
-          agentGroupId: group.id,
-          groupDir,
-          selectedSkills: selectedSkillNames(config),
-          hostEnv: process.env,
-          coreOwnsProviderSurfaces: true,
-        }) ?? {},
-      ),
-    );
+    const surfaces = await projectProviderSpawnSurfaces(contract, group.id, groupDir, sessionDirectory);
     const mounts = await buildMounts(group, session, config, provider, surfaces.contribution, surfaces);
     assertMountSourcesExist(mounts);
 
-    const containerName = `mount-verify-${Date.now()}`;
+    const containerName = `mount-verify-${randomUUID()}`;
     if (!readiness.gatewayProjection) {
       throw failure(input.check, 2, 'gateway_projection_unavailable', 'The gateway mount boundary was not projected.');
     }
@@ -382,6 +372,10 @@ async function runInProductionBoundary(
     if (handle) {
       try {
         await handle.stop('mount-verification-complete');
+      } catch (err) {
+        cleanupErrors.push(err);
+      }
+      try {
         await assertRuntimeReaped(driver, key);
       } catch (err) {
         cleanupErrors.push(err);
@@ -411,7 +405,12 @@ async function projectGatewayBoundary(
   config: ContainerConfig,
   check: MountVerificationCheck,
 ): Promise<GatewaySessionProjection> {
-  const projectGateway = getGatewayProvider().sessions.project;
+  let projectGateway: ReturnType<typeof getGatewayProvider>['sessions']['project'];
+  try {
+    projectGateway = getGatewayProvider().sessions.project;
+  } catch {
+    throw failure(check, 2, 'gateway_projection_unavailable', 'The gateway cannot be projected read-only.');
+  }
   if (!projectGateway) {
     throw failure(check, 2, 'gateway_projection_unavailable', 'The gateway cannot be projected read-only.');
   }
@@ -436,12 +435,7 @@ async function projectGatewayBoundary(
     );
   } catch (err) {
     if (err instanceof MountVerificationFailure) throw err;
-    throw failure(
-      check,
-      2,
-      'gateway_projection_unavailable',
-      'The gateway mount boundary could not be projected.',
-    );
+    throw failure(check, 2, 'gateway_projection_unavailable', 'The gateway mount boundary could not be projected.');
   }
 }
 
@@ -520,6 +514,10 @@ function assertGatewayProjection(
       !mount ||
       typeof mount.hostSourceRoot !== 'string' ||
       typeof mount.containerPath !== 'string' ||
+      mount.hostSourceRoot.length > 1024 ||
+      mount.containerPath.length > 1024 ||
+      /[\0\r\n]/.test(mount.hostSourceRoot) ||
+      /[\0\r\n]/.test(mount.containerPath) ||
       !path.isAbsolute(mount.hostSourceRoot) ||
       path.normalize(mount.hostSourceRoot) !== mount.hostSourceRoot ||
       !path.isAbsolute(mount.containerPath) ||
@@ -531,15 +529,19 @@ function assertGatewayProjection(
     try {
       realSourceRoot = fs.realpathSync(mount.hostSourceRoot);
     } catch {
-      throw failure(
-        check,
-        2,
-        'gateway_projection_unavailable',
-        'A projected gateway source root is unavailable.',
-      );
+      throw failure(check, 2, 'gateway_projection_unavailable', 'A projected gateway source root is unavailable.');
     }
     if (realSourceRoot !== mount.hostSourceRoot) {
       throw failure(check, 2, 'gateway_projection_unavailable', 'A gateway source root is not canonical.');
+    }
+    let sourceStat: fs.Stats;
+    try {
+      sourceStat = fs.lstatSync(realSourceRoot);
+    } catch {
+      throw failure(check, 2, 'gateway_projection_unavailable', 'A gateway source root is unavailable.');
+    }
+    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+      throw failure(check, 2, 'gateway_projection_unavailable', 'A gateway source root is not a directory.');
     }
     // No gateway may occupy this namespace in a diagnostic that claims the
     // selected additional mount and deny aliases have production-equivalent
@@ -575,7 +577,12 @@ function isContainedRelative(relative: string): boolean {
 
 function assertRequestActive(request: PreparedRequest): void {
   if (performance.now() >= request.deadlineAt) {
-    throw failure(request.input.check, 2, 'request_expired', 'The verification request expired before the next action.');
+    throw failure(
+      request.input.check,
+      2,
+      'request_expired',
+      'The verification request expired before the next action.',
+    );
   }
 }
 
@@ -597,7 +604,20 @@ async function executeProgram(
   } catch {
     return { ok: false, unavailable: true };
   }
-  const exec = handle.execSpec(['node', '-e', program, JSON.stringify(request)]);
+  // Keep a watchdog inside the container as well as around the host-side exec
+  // client. Killing a detached runtime client is not, by itself, proof that
+  // its exec process stopped; GNU timeout reaps the fixed program even if the
+  // client connection disappears at the request deadline.
+  const inContainerTimeout = `${Math.max(1, timeoutMs) / 1000}s`;
+  const exec = handle.execSpec([
+    'timeout',
+    '--signal=KILL',
+    inContainerTimeout,
+    'node',
+    '-e',
+    program,
+    JSON.stringify(request),
+  ]);
   return runBounded(exec.bin, exec.argsPlain, timeoutMs);
 }
 
@@ -657,16 +677,14 @@ async function runBounded(bin: string, args: readonly string[], timeoutMs: numbe
 }
 
 async function assertRuntimeReaped(driver: ReturnType<typeof getSessionDriver>, key: SessionKey): Promise<void> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const survivor = (await driver.listSessions(INSTALL_SLUG)).find(
-      (entry) =>
-        entry.handle.key.installSlug === key.installSlug &&
-        entry.handle.key.agentGroupId === key.agentGroupId &&
-        entry.handle.key.sessionId === key.sessionId,
-    );
-    if (!survivor) return;
-    await survivor.handle.stop('mount-verification-reap');
-  }
+  const survivor = (await driver.listSessions(INSTALL_SLUG)).find(
+    (entry) =>
+      entry.handle.key.installSlug === key.installSlug &&
+      entry.handle.key.agentGroupId === key.agentGroupId &&
+      entry.handle.key.sessionId === key.sessionId,
+  );
+  if (!survivor) return;
+  await survivor.handle.stop('mount-verification-reap');
   const survived = (await driver.listSessions(INSTALL_SLUG)).some(
     (entry) =>
       entry.handle.key.installSlug === key.installSlug &&

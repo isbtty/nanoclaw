@@ -709,6 +709,7 @@ registerResource({
     'verify-mount': {
       access: 'open',
       hostOnly: true,
+      invalidArgsExitCode: 2,
       description:
         "Verify one configured additional mount through the group's real session-driver boundary. " +
         'OPERATOR-ONLY. Capability is read-only; marker checks run a bounded, networkless diagnostic container; ' +

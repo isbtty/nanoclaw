@@ -1589,7 +1589,7 @@ export function syncSkillSymlinks(
  * Resolve the group's skill selection to concrete names — `'all'` recomputes
  * from `container/skills/` so newly-added upstream skills appear automatically.
  */
-export function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
+function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
   const sharedSkillsDir = path.join(process.cwd(), 'container', 'skills');
   const available = fs.existsSync(sharedSkillsDir)
     ? fs.readdirSync(sharedSkillsDir).filter((e) => {

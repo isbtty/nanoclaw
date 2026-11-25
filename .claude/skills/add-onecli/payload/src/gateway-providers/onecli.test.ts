@@ -280,7 +280,7 @@ describe('OneCLI gateway package', () => {
     });
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     try {
-      const projected = await provider.sessions.project!(groupInput('g1'));
+      const projected = await provider.sessions.project!(groupInput('g1'), new AbortController().signal);
 
       expect(projected).toEqual({
         mounts: [
@@ -310,7 +310,7 @@ describe('OneCLI gateway package', () => {
   });
 
   it('refuses projection before the gateway GET when the staging root is unavailable', async () => {
-    await expect(provider.sessions.project!(groupInput('g1'))).rejects.toThrow();
+    await expect(provider.sessions.project!(groupInput('g1'), new AbortController().signal)).rejects.toThrow();
     expect(sdk.getContainerConfig).not.toHaveBeenCalled();
     expect(sdk.ensureAgent).not.toHaveBeenCalled();
   });

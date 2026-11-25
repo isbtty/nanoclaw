@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { projectProviderSpawnSurfaces } from './realize.js';
 import type { ProviderHostContract } from './registry.js';
@@ -18,10 +18,6 @@ describe('projectProviderSpawnSurfaces', () => {
     roots.push(root);
     const groupDir = path.join(root, 'group-that-does-not-exist');
     const sessionDir = path.join(root, 'session-that-does-not-exist');
-    const legacyOverlay = vi.fn(async () => ({
-      env: { SAFE_SETTING: '1' },
-      mounts: [{ hostPath: '/must/not/pass', containerPath: '/legacy', readonly: false }],
-    }));
     const contract = {
       seamVersion: 1,
       projectDocument: {
@@ -43,10 +39,10 @@ describe('projectProviderSpawnSurfaces', () => {
       files: [],
     } satisfies ProviderHostContract;
 
-    const projection = await projectProviderSpawnSurfaces(contract, 'ag-1', groupDir, sessionDir, legacyOverlay);
+    const projection = await projectProviderSpawnSurfaces(contract, 'ag-1', groupDir, sessionDir);
 
     expect(projection.skillBackingPaths.get('skills')).toBe(path.join(groupDir, '.provider', 'shared'));
-    expect(projection.contribution).toEqual({ env: { SAFE_SETTING: '1' } });
+    expect(projection.contribution).toEqual({});
     expect(fs.existsSync(groupDir)).toBe(false);
     expect(fs.existsSync(sessionDir)).toBe(false);
   });

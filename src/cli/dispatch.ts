@@ -192,7 +192,12 @@ export async function dispatch(
   try {
     parsed = cmd.parseArgs(req.args);
   } catch (e) {
-    return err(req.id, 'invalid-args', errMsg(e));
+    return err(
+      req.id,
+      'invalid-args',
+      errMsg(e),
+      cmd.invalidArgsExitCode === undefined ? {} : { exitCode: cmd.invalidArgsExitCode },
+    );
   }
 
   try {

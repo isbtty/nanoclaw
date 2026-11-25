@@ -94,6 +94,17 @@ register({
 });
 
 register({
+  name: 'machine-invalid-args-cmd',
+  description: 'test command with usage-error exit semantics',
+  access: 'open',
+  invalidArgsExitCode: 2,
+  parseArgs: () => {
+    throw new Error('bad fixture args');
+  },
+  handler: async () => ({}),
+});
+
+register({
   name: 'groups-test',
   description: 'test command (groups resource)',
   resource: 'groups',
@@ -346,6 +357,15 @@ describe('machine command failures', () => {
         exitCode: 2,
         details: { schema: 'fixture/v1', ok: false },
       },
+    });
+  });
+
+  it('carries the command-specific usage-error exit code', async () => {
+    const resp = await dispatch({ id: 'invalid', command: 'machine-invalid-args-cmd', args: {} }, { caller: 'host' });
+    expect(resp).toEqual({
+      id: 'invalid',
+      ok: false,
+      error: { code: 'invalid-args', message: 'bad fixture args', exitCode: 2 },
     });
   });
 });

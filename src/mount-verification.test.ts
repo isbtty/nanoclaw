@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   root: '/tmp/nanoclaw-mount-verification-test',
   programResults: [] as boolean[],
   preparedSpec: undefined as unknown,
+  mountConfigured: true,
   stop: vi.fn(async () => {}),
   project: vi.fn(async () => ({ mounts: [] as Array<{ hostSourceRoot: string; containerPath: string }> })),
 }));
@@ -25,7 +26,9 @@ vi.mock('./container-config.js', () => ({
   configFromDb: vi.fn(() => ({
     mcpServers: {},
     packages: { apt: [], npm: [] },
-    additionalMounts: [{ hostPath: path.join(state.root, 'wiki'), containerPath: 'wiki', readonly: false }],
+    additionalMounts: state.mountConfigured
+      ? [{ hostPath: path.join(state.root, 'wiki'), containerPath: 'wiki', readonly: false }]
+      : [],
     skills: [],
     provider: 'claude',
   })),
@@ -107,6 +110,7 @@ const driver = vi.hoisted(() => ({
 vi.mock('./drivers/index.js', () => ({ getSessionDriver: vi.fn(() => driver) }));
 vi.mock('./container-runner.js', () => ({
   resolveProviderName: vi.fn(() => 'claude'),
+  selectedSkillNames: vi.fn(() => []),
   buildMounts: vi.fn(async () => [
     {
       hostPath: path.join(state.root, 'wiki'),
@@ -149,6 +153,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.programResults = [];
   state.preparedSpec = undefined;
+  state.mountConfigured = true;
   fs.rmSync(state.root, { recursive: true, force: true });
   fs.mkdirSync(path.join(state.root, 'wiki'), { recursive: true });
   fs.mkdirSync(path.join(state.root, 'gateway'), { recursive: true });
@@ -168,6 +173,18 @@ describe('verifyGroupMount', () => {
       check: 'capability',
       code: 'capability_available',
       mountState: 'ready',
+    });
+    expect(state.project).toHaveBeenCalledOnce();
+    expect(driver.prepare).not.toHaveBeenCalled();
+  });
+
+  it('reports capability before the selected mount has been configured', async () => {
+    state.mountConfigured = false;
+    await expect(verifyGroupMount({ id: 'ag-1', mount: 'wiki', check: 'capability' })).resolves.toMatchObject({
+      ok: true,
+      check: 'capability',
+      code: 'capability_available',
+      mountState: 'absent',
     });
     expect(state.project).toHaveBeenCalledOnce();
     expect(driver.prepare).not.toHaveBeenCalled();
@@ -211,6 +228,67 @@ describe('verifyGroupMount', () => {
       }),
     ).resolves.toMatchObject({ code: 'marker_already_present' });
     expect(handle.execSpec).toHaveBeenCalledTimes(2);
+  });
+
+  it('appends once when the edit marker is not present yet', async () => {
+    state.programResults = [false, true];
+    await expect(
+      verifyGroupMount({
+        id: 'ag-1',
+        mount: 'wiki',
+        check: 'append-marker',
+        run_id: 'run-append',
+        relative: 'references/v2-through-test-run-append.md',
+        expect_marker: 'INITIAL=run-append',
+        append_marker: 'EDIT=run-append',
+      }),
+    ).resolves.toMatchObject({ code: 'marker_appended' });
+  });
+
+  it('serializes concurrent append checks for the same group, mount, and run', async () => {
+    state.programResults = [false, true, true, true];
+    const request = {
+      id: 'ag-1',
+      mount: 'wiki',
+      check: 'append-marker' as const,
+      run_id: 'run-locked',
+      relative: 'references/v2-through-test-run-locked.md',
+      expect_marker: 'INITIAL=run-locked',
+      append_marker: 'EDIT=run-locked',
+    };
+    const results = await Promise.all([verifyGroupMount(request), verifyGroupMount(request)]);
+    expect(results.map((result) => result.code)).toEqual(['marker_appended', 'marker_already_present']);
+    expect(handle.execSpec).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not start or exec after the host mutation deadline, and still reaps prepare output', async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    driver.prepare.mockImplementationOnce(async (spec) => {
+      state.preparedSpec = spec;
+      now = 60_001;
+      return handle;
+    });
+    try {
+      await expect(
+        verifyGroupMount({
+          id: 'ag-1',
+          mount: 'wiki',
+          check: 'read-marker',
+          run_id: 'run-deadline',
+          relative: 'references/v2-through-test-run-deadline.md',
+          expect_marker: 'INITIAL=run-deadline',
+        }),
+      ).rejects.toMatchObject({
+        exitCode: 2,
+        details: expect.objectContaining({ check: 'read-marker', code: 'request_expired' }),
+      });
+      expect(handle.start).not.toHaveBeenCalled();
+      expect(handle.execSpec).not.toHaveBeenCalled();
+      expect(handle.stop).toHaveBeenCalledOnce();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('fails before launch when a projected gateway source overlaps a protected path', async () => {

@@ -32,6 +32,8 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
    * itself lives inside, so an agent must never be able to alter it.
    */
   hostOnly?: boolean;
+  /** Optional process exit code for parser failures of this command. */
+  invalidArgsExitCode?: 1 | 2;
   /**
    * Dotted guard-catalog action name (e.g. `roles.grant`,
    * `groups.config.add-mcp-server`). Set by registerResource from the

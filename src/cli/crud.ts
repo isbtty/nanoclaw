@@ -54,6 +54,8 @@ export interface CustomOperation {
   examples?: string[];
   /** Operator-only: never runnable from inside a container (see CommandDef.hostOnly). */
   hostOnly?: boolean;
+  /** Process exit code for malformed arguments to this custom operation. */
+  invalidArgsExitCode?: 1 | 2;
   handler: (args: Record<string, unknown>, ctx: CallerContext) => Promise<unknown>;
   /** Presentational renderer for human mode — see CommandDef.formatHuman. */
   formatHuman?: (data: unknown) => string;
@@ -522,6 +524,7 @@ export function registerResource(def: ResourceDef): void {
         description: op.description,
         access: op.access,
         hostOnly: op.hostOnly,
+        invalidArgsExitCode: op.invalidArgsExitCode,
         resource: def.plural,
         parseArgs: declared
           ? (raw) => {

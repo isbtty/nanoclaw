@@ -121,11 +121,9 @@ export async function projectProviderSpawnSurfaces(
   agentGroupId: string,
   groupDir: string,
   sessionDirectory: string,
-  legacyOverlay: () => Promise<import('../providers/provider-container-registry.js').ProviderContainerContribution>,
 ): Promise<ProviderSpawnRealization> {
   const volumes = new Map(contract.stateVolumes.map((volume) => [volume.id, volume]));
   const skillBackingPaths = new Map<string, string>();
-  const overlay = await legacyOverlay();
 
   for (const backing of contract.skillBackings) {
     skillBackingPaths.set(
@@ -134,11 +132,13 @@ export async function projectProviderSpawnSurfaces(
     );
   }
 
-  // Declared contracts own their mounts.  The compatibility adapter may only
-  // contribute env, exactly as in the realizing path above.
+  // Declared contracts own their mounts.  The diagnostic intentionally does
+  // not invoke the compatibility adapter: its env is removed from the
+  // networkless verifier anyway, and even a nominally read-only env adapter
+  // may inspect an operator .env file while deriving it.
   return {
     skillBackingPaths,
-    contribution: overlay.env ? { env: overlay.env } : {},
+    contribution: {},
   };
 }
 
