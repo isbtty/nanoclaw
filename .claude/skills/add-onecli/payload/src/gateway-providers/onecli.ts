@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { normalizeGatewayApprovalSummary } from '../gateway-approval-summary.js';
 /** OneCLI typed configuration and supervised native approval adapter. */
 import { OneCLI, ApprovalClient, type ContainerConfig, type ApprovalRequest } from '@onecli-sh/sdk';
@@ -25,6 +28,7 @@ import {
   type GatewayContribution,
   type GatewaySessionInput,
   type GatewaySessionLease,
+  type GatewaySessionProjection,
 } from './gateway-provider-registry.js';
 
 const env = readEnvFile([
@@ -329,6 +333,34 @@ async function ensureSession(input: GatewaySessionInput, signal: AbortSignal): P
   };
 }
 
+/**
+ * Describe only the host-source boundary and container destinations used by
+ * OneCLI mounts. Diagnostics must never materialize those files or expose the
+ * CA, credential stand-ins, account id, or contributed environment.
+ */
+async function projectSession(input: GatewaySessionInput): Promise<GatewaySessionProjection> {
+  const configuredRoot = path.resolve(DATA_DIR, 'onecli');
+  const info = fs.lstatSync(configuredRoot);
+  const hostSourceRoot = fs.realpathSync.native(configuredRoot);
+  if (!info.isDirectory() || info.isSymbolicLink() || !path.isAbsolute(hostSourceRoot)) {
+    throw new Error('OneCLI projection source root must be an existing canonical directory');
+  }
+
+  // This official GET is the sole external operation on the diagnostic path.
+  // Read destination metadata only; the returned secret-adjacent bodies and
+  // environment never leave this provider and are not staged or transformed.
+  const config = await onecli.getContainerConfig({ agent: input.key.agentGroupId });
+  const destinations = [
+    config.caCertificateContainerPath,
+    '/tmp/onecli-combined-ca.pem',
+    ...(config.credentialStubs ?? []).map((stub) => stub.containerPath),
+  ];
+
+  return {
+    mounts: destinations.map((containerPath) => ({ hostSourceRoot, containerPath })),
+  };
+}
+
 async function subscribeApprovals(
   decide: (request: GatewayApprovalRequest) => Promise<'approve' | 'deny'>,
   signal: AbortSignal,
@@ -444,6 +476,6 @@ registerGatewayProvider({
     },
   },
   agentSkills: ['onecli-gateway'],
-  sessions: { ensure: ensureSession },
+  sessions: { project: projectSession, ensure: ensureSession },
   approvals: { legacyActions: ['onecli_credential'], subscribe: subscribeApprovals },
 });

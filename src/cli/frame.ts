@@ -26,7 +26,11 @@ export type ResponseFrame =
   // old clients that don't know the field just fall back to their own
   // rendering of `data`.
   | { id: string; ok: true; data: unknown; human?: string }
-  | { id: string; ok: false; error: { code: ErrorCode; message: string } };
+  | {
+      id: string;
+      ok: false;
+      error: { code: ErrorCode; message: string; exitCode?: 1 | 2; details?: unknown };
+    };
 
 export type ErrorCode =
   'unknown-command' | 'invalid-args' | 'forbidden' | 'approval-pending' | 'handler-error' | 'transport-error';
