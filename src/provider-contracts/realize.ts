@@ -107,6 +107,41 @@ export interface ProviderSpawnRealization {
   contribution: import('../providers/provider-container-registry.js').ProviderContainerContribution;
 }
 
+/**
+ * Project the provider surfaces a spawn would mount without realizing them.
+ *
+ * Operational diagnostics use this after a normal spawn has already created
+ * the group-lifetime surfaces.  Keeping the projection separate is
+ * load-bearing: `realizeProviderSpawnSurfaces` composes the project document
+ * and reconciles shared skill links, while a read-only verification command
+ * must not rewrite either one merely to prove the runtime boundary.
+ */
+export async function projectProviderSpawnSurfaces(
+  contract: ProviderHostContract,
+  agentGroupId: string,
+  groupDir: string,
+  sessionDirectory: string,
+): Promise<ProviderSpawnRealization> {
+  const volumes = new Map(contract.stateVolumes.map((volume) => [volume.id, volume]));
+  const skillBackingPaths = new Map<string, string>();
+
+  for (const backing of contract.skillBackings) {
+    skillBackingPaths.set(
+      backing.id,
+      skillBackingPath(backing.location, volumes, agentGroupId, groupDir, sessionDirectory),
+    );
+  }
+
+  // Declared contracts own their mounts.  The diagnostic intentionally does
+  // not invoke the compatibility adapter: its env is removed from the
+  // networkless verifier anyway, and even a nominally read-only env adapter
+  // may inspect an operator .env file while deriving it.
+  return {
+    skillBackingPaths,
+    contribution: {},
+  };
+}
+
 /** Realize every-spawn provider surfaces in the order derived from their resources. */
 export async function realizeProviderSpawnSurfaces(
   _provider: string,

@@ -18,11 +18,13 @@ vi.mock('../log.js', () => ({
 import {
   configuredDriverKind,
   createSessionDriver,
+  dockerNetworkArgs,
   getSessionDriver,
   mountPolicy,
   readSetting,
   resetSessionDriver,
 } from './index.js';
+import { fixtureSpec, fixtureSpecWithAux } from './spec-fixture.js';
 // Imported from the registry module, not the barrel that re-exports it: this is
 // the entry point an overlay reaches for, and it has to work without the
 // selection module having been evaluated first.
@@ -76,6 +78,13 @@ beforeEach(() => {
 afterEach(() => {
   resetSessionDriver(null);
   process.chdir(previous);
+});
+
+describe('offline Docker sessions', () => {
+  it('starts only the agent with networking disabled', () => {
+    expect(dockerNetworkArgs(fixtureSpec({ network: 'none' }))).toEqual(['--network', 'none']);
+    expect(() => dockerNetworkArgs(fixtureSpecWithAux({ network: 'none' }))).toThrow(/offline/);
+  });
 });
 
 describe('configuredDriverKind', () => {

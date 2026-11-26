@@ -35,6 +35,7 @@ import {
 } from '../../templates/restamp.js';
 import { isValidTimezone } from '../../timezone.js';
 import type { AgentGroup, ContainerConfigRow } from '../../types.js';
+import { CliCommandError } from '../command-error.js';
 import { registerResource } from '../crud.js';
 import { localizeIsoTimestamps } from '../format.js';
 import { projectDestinationsToSessions } from './destinations.js';
@@ -703,6 +704,57 @@ registerResource({
           ? `${rwGate} Run \`ncl groups restart --id ${id}\` to apply.`
           : `Run \`ncl groups restart --id ${id}\` for the mount to take effect.`;
         return updated ? { updated: mount, note } : { added: mount, note };
+      },
+    },
+    'verify-mount': {
+      access: 'open',
+      hostOnly: true,
+      invalidArgsExitCode: 2,
+      description:
+        "Verify one configured additional mount through the group's real session-driver boundary. " +
+        'OPERATOR-ONLY. Capability is read-only; marker checks run a bounded, networkless diagnostic container; ' +
+        'append-marker can only edit its run-owned fixture. Machine callers should use --json.',
+      args: [
+        { name: 'id', type: 'string', description: 'Target agent-group id.', required: true },
+        { name: 'mount', type: 'string', description: 'Configured additional-mount name.', required: true },
+        {
+          name: 'check',
+          type: 'string',
+          description: 'Bounded verification operation.',
+          required: true,
+          enum: ['capability', 'read-marker', 'append-marker', 'deny-path'],
+        },
+        { name: 'run_id', type: 'string', description: 'Safe fixture run id (not used by capability).' },
+        { name: 'relative', type: 'string', description: 'INDEX.md or the run-owned fixture relative path.' },
+        { name: 'expect_marker', type: 'string', description: 'Exact run-bound marker expected in the fixture.' },
+        { name: 'append_marker', type: 'string', description: 'Exact run-bound marker appended idempotently.' },
+        {
+          name: 'protected_host_paths',
+          type: 'json',
+          description: 'For deny-path: 1-32 canonical absolute host paths (prefer --stdin-json).',
+        },
+        {
+          name: 'container_path',
+          type: 'string',
+          description: 'For deny-path: the fixed /workspace/extra/<alias> that must be absent.',
+        },
+      ],
+      examples: [
+        'ncl groups verify-mount --id ag-123 --mount shared --check capability --json',
+        'ncl groups verify-mount --stdin-json --json < request.json',
+      ],
+      handler: async (args) => {
+        const verification = await import('../../mount-verification.js');
+        try {
+          return await verification.verifyGroupMount(
+            args as unknown as Parameters<typeof verification.verifyGroupMount>[0],
+          );
+        } catch (err) {
+          if (err instanceof verification.MountVerificationFailure) {
+            throw new CliCommandError(err.message, err.exitCode, err.details);
+          }
+          throw err;
+        }
       },
     },
     'config remove-mount': {

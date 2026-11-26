@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   // Exit only after stdout drains: process.exit() discards buffered pipe
   // writes, silently truncating any response past the 64KB pipe buffer
   // (bit `ncl sessions list --json` at scale).
-  process.stdout.write(output, () => process.exit(res.ok ? 0 : 1));
+  process.stdout.write(output, () => process.exit(res.ok ? 0 : (res.error.exitCode ?? 1)));
 }
 
 function pickTransport(): Transport {

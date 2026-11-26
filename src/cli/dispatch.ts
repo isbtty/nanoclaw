@@ -22,6 +22,7 @@ import { guard, type GuardActor } from '../guard/index.js';
 import { registerApprovalHandler, requestApproval } from '../modules/approvals/index.js';
 import type { PendingApproval } from '../types.js';
 import type { CallerContext, ErrorCode, RequestFrame, ResponseFrame } from './frame.js';
+import { CliCommandError } from './command-error.js';
 import { normalizeArgs } from './args.js';
 import { localizeIsoTimestamps } from './format.js';
 import { getResource } from './crud.js';
@@ -191,7 +192,12 @@ export async function dispatch(
   try {
     parsed = cmd.parseArgs(req.args);
   } catch (e) {
-    return err(req.id, 'invalid-args', errMsg(e));
+    return err(
+      req.id,
+      'invalid-args',
+      errMsg(e),
+      cmd.invalidArgsExitCode === undefined ? {} : { exitCode: cmd.invalidArgsExitCode },
+    );
   }
 
   try {
@@ -248,6 +254,9 @@ export async function dispatch(
     }
     return { id: req.id, ok: true, data };
   } catch (e) {
+    if (e instanceof CliCommandError) {
+      return err(req.id, 'handler-error', e.message, { exitCode: e.exitCode, details: e.details });
+    }
     return err(req.id, 'handler-error', errMsg(e));
   }
 }
@@ -363,8 +372,13 @@ function editDistance(a: string, b: string, cap: number): number {
   return prev[b.length];
 }
 
-function err(id: string, code: ErrorCode, message: string): ResponseFrame {
-  return { id, ok: false, error: { code, message } };
+function err(
+  id: string,
+  code: ErrorCode,
+  message: string,
+  extra: { exitCode?: 1 | 2; details?: unknown } = {},
+): ResponseFrame {
+  return { id, ok: false, error: { code, message, ...extra } };
 }
 
 function errMsg(e: unknown): string {

@@ -58,7 +58,7 @@ import {
 // whole reason the registry lives in its own module — see `driver-registry.ts`.
 import './installed.js';
 import { withSessionEvents, type SessionEventsDriver } from './session-events.js';
-import type { MountPolicy, SessionDriver, SessionSpec } from './types.js';
+import { specInvalid, type MountPolicy, type SessionDriver, type SessionSpec } from './types.js';
 
 const DEFAULT_DRIVER_KIND = 'docker';
 
@@ -77,7 +77,11 @@ export function readSetting(key: (typeof SETTINGS)[number], env: NodeJS.ProcessE
  * composition never sees an argv-shaped network selection: `spec.network`
  * states the intent, this realizes it, and nothing rides between them.
  */
-function dockerNetworkArgs(spec: SessionSpec): string[] {
+export function dockerNetworkArgs(spec: SessionSpec): string[] {
+  if (spec.network === 'none') {
+    if (spec.containers.length !== 1) throw specInvalid('offline sessions cannot share an auxiliary network');
+    return ['--network', 'none'];
+  }
   if (spec.networkAccess.target.kind === 'session-container') return [];
   if (ensureEgressNetwork(spec.networkAccess)) {
     log.info('Egress lockdown active', { containerName: agentContainerName(spec), network: EGRESS_NETWORK });

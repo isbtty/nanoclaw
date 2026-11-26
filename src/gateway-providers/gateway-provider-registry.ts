@@ -68,6 +68,23 @@ export interface GatewaySessionLease {
   onUnavailable?(report: (reason: string) => void): void;
 }
 
+/**
+ * Read-only proof surface for a bounded filesystem diagnostic.
+ *
+ * `hostSourceRoot` is a canonical existing directory guaranteed to contain
+ * the real source of this projected mount.  It may intentionally be a
+ * conservative superset (for example a content-addressed staging directory),
+ * so the host can prove non-overlap without reading a staged file or secret.
+ */
+export interface GatewayMountProjection {
+  hostSourceRoot: string;
+  containerPath: string;
+}
+
+export interface GatewaySessionProjection {
+  mounts: readonly GatewayMountProjection[];
+}
+
 export type GatewayApprovalDecision = 'approve' | 'deny' | 'unavailable';
 
 /** Privacy-safe request presentation translated from a provider's native protocol. */
@@ -138,6 +155,13 @@ export interface GatewayProviderDefinition {
   /** Only the selected gateway's skills and instructions reach an agent. */
   agentSkills: readonly string[];
   sessions: {
+    /**
+     * Pure/read-only projection used by host diagnostics. It must not create
+     * accounts, grant credentials, stage files, or read credential contents.
+     * A provider that cannot prove its mount boundary omits this hook and the
+     * diagnostic reports capability unavailable.
+     */
+    project?(input: GatewaySessionInput, signal: AbortSignal): Promise<GatewaySessionProjection>;
     /** Idempotently creates or reconnects whatever this session needs; same call for new and adopted sessions. */
     ensure(input: GatewaySessionInput, signal: AbortSignal): Promise<GatewaySessionLease>;
     /** Called after surviving sessions have been considered for adoption. */

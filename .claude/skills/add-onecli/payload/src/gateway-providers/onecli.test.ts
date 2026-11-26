@@ -7,11 +7,18 @@ import type { GatewayApprovalRequest, GatewaySessionInput } from './gateway-prov
 
 const sdk = vi.hoisted(() => ({
   ensureAgent: vi.fn(async (_input: { name: string; identifier: string }) => ({ created: false })),
-  getContainerConfig: vi.fn(async () => ({
-    env: { HTTPS_PROXY: 'http://host.docker.internal:15001' },
-    caCertificate: 'fixture-ca',
-    caCertificateContainerPath: '/tmp/onecli-ca.pem',
-  })),
+  getContainerConfig: vi.fn(
+    async (): Promise<{
+      env: Record<string, string>;
+      caCertificate: string;
+      caCertificateContainerPath: string;
+      credentialStubs?: Array<{ containerPath: string; content: string }>;
+    }> => ({
+      env: { HTTPS_PROXY: 'http://host.docker.internal:15001' },
+      caCertificate: 'fixture-ca',
+      caCertificateContainerPath: '/tmp/onecli-ca.pem',
+    }),
+  ),
   startApproval: vi.fn(),
   manualApproval: undefined as undefined | ((request: Record<string, unknown>) => Promise<'approve' | 'deny'>),
   stopApproval: vi.fn(),
@@ -254,6 +261,58 @@ describe('OneCLI gateway package', () => {
     });
     expect(withProviderEnv({}, '')).toEqual({});
     controller.abort();
+  });
+
+  it('projects only the canonical staging root and destination metadata', async () => {
+    const sourceRoot = path.join(ADAPTER_DATA, 'onecli');
+    fs.mkdirSync(sourceRoot, { recursive: true, mode: 0o700 });
+    const canonicalSourceRoot = fs.realpathSync.native(sourceRoot);
+    sdk.getContainerConfig.mockResolvedValueOnce({
+      env: {
+        HTTPS_PROXY: 'must-not-cross-the-projection',
+      },
+      caCertificate: 'must-not-cross-the-projection-ca',
+      caCertificateContainerPath: '/tmp/onecli-ca.pem',
+      credentialStubs: [
+        { containerPath: '/home/node/.claude/credentials.json', content: 'must-not-cross-stub-one' },
+        { containerPath: '/home/node/.config/tool/auth.json', content: 'must-not-cross-stub-two' },
+      ],
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    try {
+      const projected = await provider.sessions.project!(groupInput('g1'), new AbortController().signal);
+
+      expect(projected).toEqual({
+        mounts: [
+          { hostSourceRoot: canonicalSourceRoot, containerPath: '/tmp/onecli-ca.pem' },
+          { hostSourceRoot: canonicalSourceRoot, containerPath: '/tmp/onecli-combined-ca.pem' },
+          { hostSourceRoot: canonicalSourceRoot, containerPath: '/home/node/.claude/credentials.json' },
+          { hostSourceRoot: canonicalSourceRoot, containerPath: '/home/node/.config/tool/auth.json' },
+        ],
+      });
+      expect(sdk.getContainerConfig).toHaveBeenCalledWith({ agent: 'g1' });
+      expect(sdk.ensureAgent).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fs.readdirSync(sourceRoot)).toEqual([]);
+      const serialized = JSON.stringify(projected);
+      for (const forbidden of [
+        'must-not-cross-the-projection',
+        'must-not-cross-the-projection-ca',
+        'must-not-cross-stub-one',
+        'must-not-cross-stub-two',
+        'gateway-managed',
+      ]) {
+        expect(serialized).not.toContain(forbidden);
+      }
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('refuses projection before the gateway GET when the staging root is unavailable', async () => {
+    await expect(provider.sessions.project!(groupInput('g1'), new AbortController().signal)).rejects.toThrow();
+    expect(sdk.getContainerConfig).not.toHaveBeenCalled();
+    expect(sdk.ensureAgent).not.toHaveBeenCalled();
   });
 
   it('an adopted session (no provider given) reads and writes no grants', async () => {

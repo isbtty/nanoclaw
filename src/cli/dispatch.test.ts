@@ -72,6 +72,7 @@ vi.mock('../modules/approvals/index.js', () => ({
 
 // Register a test command so dispatch has something to find
 import { register } from './registry.js';
+import { CliCommandError } from './command-error.js';
 
 register({
   name: 'test-cmd',
@@ -80,6 +81,27 @@ register({
   access: 'open',
   parseArgs: (raw) => raw,
   handler: async (args) => ({ echo: args }),
+});
+
+register({
+  name: 'machine-failure-cmd',
+  description: 'test command with a machine failure result',
+  access: 'open',
+  parseArgs: (raw) => raw,
+  handler: async () => {
+    throw new CliCommandError('bounded failure', 2, { schema: 'fixture/v1', ok: false });
+  },
+});
+
+register({
+  name: 'machine-invalid-args-cmd',
+  description: 'test command with usage-error exit semantics',
+  access: 'open',
+  invalidArgsExitCode: 2,
+  parseArgs: () => {
+    throw new Error('bad fixture args');
+  },
+  handler: async () => ({}),
 });
 
 register({
@@ -320,6 +342,31 @@ describe('host-only commands (operator-only)', () => {
   it('passes the gate for a host (operator) caller', async () => {
     const resp = await dispatch({ id: '1', command: 'host-only-cmd', args: { x: 1 } }, { caller: 'host' });
     expect(resp.ok).toBe(true);
+  });
+});
+
+describe('machine command failures', () => {
+  it('preserves additive details and the requested process exit code', async () => {
+    const resp = await dispatch({ id: 'machine', command: 'machine-failure-cmd', args: {} }, { caller: 'host' });
+    expect(resp).toEqual({
+      id: 'machine',
+      ok: false,
+      error: {
+        code: 'handler-error',
+        message: 'bounded failure',
+        exitCode: 2,
+        details: { schema: 'fixture/v1', ok: false },
+      },
+    });
+  });
+
+  it('carries the command-specific usage-error exit code', async () => {
+    const resp = await dispatch({ id: 'invalid', command: 'machine-invalid-args-cmd', args: {} }, { caller: 'host' });
+    expect(resp).toEqual({
+      id: 'invalid',
+      ok: false,
+      error: { code: 'invalid-args', message: 'bad fixture args', exitCode: 2 },
+    });
   });
 });
 
