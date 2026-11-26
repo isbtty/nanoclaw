@@ -6,6 +6,55 @@ const fs = require('node:fs');
 const { O_APPEND, O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_RDWR } = fs.constants;
 const MAX_BYTES = 8 * 1024 * 1024;
 const segment = /^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/;
+// Docker Desktop's Linux VM exposes these built-in tunnel devices even in a
+// container created with `--network none`. They have no namespace link while
+// DOWN, but `/sys/class/net` still lists them (and a `bonding_masters` control
+// file), so "anything except lo" rejects the real isolated runtime. Keep the
+// exception deliberately closed over the observed kernel devices and types;
+// an ordinary veth/eth interface is never accepted, even while DOWN.
+const dormantKernelTunnels = new Map([
+  ['erspan0', '1'],
+  ['gre0', '778'],
+  ['gretap0', '1'],
+  ['ip6_vti0', '769'],
+  ['ip6gre0', '823'],
+  ['ip6tnl0', '769'],
+  ['ip_vti0', '768'],
+  ['sit0', '776'],
+  ['tunl0', '768'],
+]);
+
+function networkIsIsolated(readText = (file) => fs.readFileSync(file, 'utf8')) {
+  const rows = readText('/proc/net/dev').split('\n').slice(2);
+  const names = [];
+  for (const row of rows) {
+    if (!row.trim()) continue;
+    const colon = row.indexOf(':');
+    if (colon < 0) return false;
+    const name = row.slice(0, colon).trim();
+    if (!name || names.includes(name)) return false;
+    names.push(name);
+  }
+  if (!names.includes('lo')) return false;
+
+  const flags = (name) => {
+    const raw = readText('/sys/class/net/' + name + '/flags').trim();
+    return /^0x[0-9a-f]+$/i.test(raw) ? Number.parseInt(raw.slice(2), 16) : NaN;
+  };
+  const loopbackFlags = flags('lo');
+  if (readText('/sys/class/net/lo/type').trim() !== '772' || !Number.isInteger(loopbackFlags)) return false;
+  if ((loopbackFlags & 0x9) !== 0x9) return false; // IFF_UP | IFF_LOOPBACK
+
+  for (const name of names) {
+    if (name === 'lo') continue;
+    const expectedType = dormantKernelTunnels.get(name);
+    if (!expectedType || readText('/sys/class/net/' + name + '/type').trim() !== expectedType) return false;
+    const deviceFlags = flags(name);
+    if (!Number.isInteger(deviceFlags) || (deviceFlags & 0x1) !== 0) return false; // IFF_UP must stay clear
+    if (readText('/sys/class/net/' + name + '/operstate').trim() !== 'down') return false;
+  }
+  return true;
+}
 
 function extraName(path) {
   const prefix = '/workspace/extra/';
@@ -71,7 +120,7 @@ function checkFile(fd, request) {
 function verify(request) {
   if (!validRequest(request)) return false;
   // Require the network namespace actually selected by the runtime.
-  if (fs.readdirSync('/sys/class/net').some((name) => name !== 'lo')) return false;
+  if (!networkIsIsolated()) return false;
   // All permitted destination names are ASCII and contain no mountinfo escapes.
   const mountpoints = fs
     .readFileSync('/proc/self/mountinfo', 'utf8')
@@ -115,7 +164,7 @@ function verify(request) {
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { checkFile, validRequest, verify };
+if (typeof module !== 'undefined') module.exports = { checkFile, networkIsIsolated, validRequest, verify };
 // node -e supplies the JSON as argv[1]. Requiring the module only loads its definitions.
 if (process.argv.length === 2 && process.execArgv.includes('-e')) {
   let ok = false;
