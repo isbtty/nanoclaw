@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { SessionStatus } from './drivers/types.js';
+
 const state = vi.hoisted(() => ({
   root: '/tmp/nanoclaw-mount-verification-test',
   programResults: [] as boolean[],
@@ -72,7 +74,7 @@ const handle = vi.hoisted(() => ({
   key: { installSlug: 'test-install', agentGroupId: 'ag-1', sessionId: 'placeholder' },
   name: 'fake-verifier',
   start: vi.fn(async () => {}),
-  status: vi.fn(async () => ({ phase: 'running' as const })),
+  status: vi.fn<() => Promise<SessionStatus>>(async () => ({ phase: 'running' })),
   stop: state.stop,
   execSpec: vi.fn(() => {
     const ok = state.programResults.shift() ?? false;
@@ -154,6 +156,7 @@ beforeEach(() => {
   state.programResults = [];
   state.preparedSpec = undefined;
   state.mountConfigured = true;
+  handle.status.mockResolvedValue({ phase: 'running' });
   fs.rmSync(state.root, { recursive: true, force: true });
   fs.mkdirSync(path.join(state.root, 'wiki'), { recursive: true });
   fs.mkdirSync(path.join(state.root, 'gateway'), { recursive: true });
@@ -212,6 +215,81 @@ describe('verifyGroupMount', () => {
     expect(spec.containers[0].contributedEnv).toEqual({});
     expect(spec.containers[0].mounts).toHaveLength(1);
     expect(state.stop).toHaveBeenCalledOnce();
+  });
+
+  it('waits for a prepared Docker runtime to transition from ready to running', async () => {
+    handle.status.mockResolvedValueOnce({ phase: 'ready' }).mockResolvedValueOnce({ phase: 'running' });
+    state.programResults = [true];
+
+    await expect(
+      verifyGroupMount({
+        id: 'ag-1',
+        mount: 'wiki',
+        check: 'read-marker',
+        run_id: 'run-start-race',
+        relative: 'references/v2-through-test-run-start-race.md',
+        expect_marker: 'INITIAL=run-start-race',
+      }),
+    ).resolves.toMatchObject({ code: 'marker_present' });
+
+    expect(handle.status).toHaveBeenCalledTimes(2);
+    expect(handle.execSpec).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['stopped', { phase: 'stopped' as const }],
+    [
+      'failed',
+      {
+        phase: 'failed' as const,
+        failure: { kind: 'started-then-died' as const, retryable: false as const, exitCode: 1 },
+      },
+    ],
+  ])('fails startup when a ready runtime becomes %s', async (_name, terminal) => {
+    handle.status.mockResolvedValueOnce({ phase: 'ready' }).mockResolvedValueOnce(terminal);
+
+    await expect(
+      verifyGroupMount({
+        id: 'ag-1',
+        mount: 'wiki',
+        check: 'read-marker',
+        run_id: 'run-start-terminal',
+        relative: 'references/v2-through-test-run-start-terminal.md',
+        expect_marker: 'INITIAL=run-start-terminal',
+      }),
+    ).rejects.toMatchObject({
+      exitCode: 2,
+      details: expect.objectContaining({ check: 'read-marker', code: 'runtime_start_failed' }),
+    });
+
+    expect(handle.execSpec).not.toHaveBeenCalled();
+    expect(handle.stop).toHaveBeenCalledOnce();
+  });
+
+  it('bounds a runtime that remains ready and reaps it without executing the probe', async () => {
+    vi.useFakeTimers();
+    handle.status.mockResolvedValue({ phase: 'ready' });
+    try {
+      const verification = verifyGroupMount({
+        id: 'ag-1',
+        mount: 'wiki',
+        check: 'read-marker',
+        run_id: 'run-start-timeout',
+        relative: 'references/v2-through-test-run-start-timeout.md',
+        expect_marker: 'INITIAL=run-start-timeout',
+      });
+      const result = expect(verification).rejects.toMatchObject({
+        exitCode: 2,
+        details: expect.objectContaining({ check: 'read-marker', code: 'runtime_start_timeout' }),
+      });
+      await vi.advanceTimersByTimeAsync(15_100);
+      await result;
+
+      expect(handle.execSpec).not.toHaveBeenCalled();
+      expect(handle.stop).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('detects an idempotent append without appending a second copy', async () => {

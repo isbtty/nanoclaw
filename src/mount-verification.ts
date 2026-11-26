@@ -47,6 +47,8 @@ const MOUNT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/;
 const MARKER_RE = /^[A-Za-z0-9_=:.-]{1,200}$/;
 const MAX_PROTECTED_PATHS = 32;
 const EXEC_TIMEOUT_MS = 15_000;
+const RUNTIME_START_TIMEOUT_MS = 15_000;
+const RUNTIME_START_POLL_MS = 50;
 const PROJECTION_TIMEOUT_MS = 15_000;
 const REQUEST_MUTATION_DEADLINE_MS = 60_000;
 const MAX_EXEC_OUTPUT_BYTES = 4096;
@@ -292,10 +294,7 @@ async function runInProductionBoundary(
     handle = await driver.prepare(spec);
     assertRequestActive(request);
     await handle.start();
-    const status = await handle.status();
-    if (status.phase !== 'running') {
-      throw failure(input.check, 2, 'runtime_start_failed', 'The verification runtime did not start.');
-    }
+    await waitForRuntimeRunning(handle, request);
     assertRequestActive(request);
 
     const mountPath = `/workspace/extra/${input.mount}`;
@@ -397,6 +396,24 @@ async function runInProductionBoundary(
     if (cleanupErrors.length > 0) {
       throw failure(input.check, 2, 'runtime_cleanup_failed', 'The verification runtime could not be fully reaped.');
     }
+  }
+}
+
+async function waitForRuntimeRunning(handle: SessionHandle, request: PreparedRequest): Promise<void> {
+  const startDeadlineAt = Math.min(request.deadlineAt, performance.now() + RUNTIME_START_TIMEOUT_MS);
+  for (;;) {
+    assertRequestActive(request);
+    const status = await handle.status();
+    if (status.phase === 'running') return;
+    if (status.phase === 'failed' || status.phase === 'stopped') {
+      throw failure(request.input.check, 2, 'runtime_start_failed', 'The verification runtime failed during startup.');
+    }
+
+    const remaining = startDeadlineAt - performance.now();
+    if (remaining <= 0) {
+      throw failure(request.input.check, 2, 'runtime_start_timeout', 'The verification runtime did not start in time.');
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(RUNTIME_START_POLL_MS, remaining)));
   }
 }
 
